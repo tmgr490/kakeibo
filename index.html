@@ -474,16 +474,16 @@
 const SEED_TRANSACTIONS = [];
 const SEED_HOLIDAYS = {};
 
-const DEFAULT_METHODS = ["現金","三井住友NL","楽天カード","モンベルオリコ","Amazon Mastercard","イオンカード","三井ショッピングパークカードセゾン","Oliveクレジットモード","ENEOSカード","PayPay","交通系IC","銀行振込","デビットカード"];
-const DEFAULT_CATEGORIES = ["食費","飲み会","日用品費","交通費","サブスク・固定費","趣味・娯楽","教養・学用品","医療費","美容・衣類","雑費","その他","貯金","帳尻合わせ"];
+const DEFAULT_METHODS = []; // 公開版は支払方法の初期値なし
+const DEFAULT_CATEGORIES = []; // 公開版は用途の初期値なし
 const DEFAULT_SUBSTATUS = ["有効","停止","一時停止","解約予定"];
 const DEFAULT_HOLIDAY_ADJUST = ["翌営業日","前営業日","調整なし"];
-const DEFAULT_ACCOUNTS = ["SBI新生銀行","三井住友銀行","楽天銀行","埼玉りそな銀行","PayPay銀行","現金管理"];
+const DEFAULT_ACCOUNTS = []; // 公開版は口座の初期値なし
 const SUBSCRIPTION_CATEGORY = "サブスク・固定費";
 
-const DEFAULT_CARDS = []; // 公開版は個人のカード情報を含めないため空にしています
+const DEFAULT_CARDS = []; // 公開版はカード情報なし
 
-const DEFAULT_SUBSCRIPTIONS = []; // 公開版は個人のサブスク情報を含めないため空にしています
+const DEFAULT_SUBSCRIPTIONS = []; // 公開版はサブスク情報なし
 
 const STORAGE_KEY = "kakeibo_tracker_state_v1";
 
@@ -1279,3 +1279,4 @@ renderAll();
 </script>
 </body>
 </html>
+
