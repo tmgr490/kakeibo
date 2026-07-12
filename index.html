@@ -916,13 +916,12 @@ function renderStatusPage(){
   wrap.innerHTML = STATE.pulldowns.categories.map(c=>{
     const spent = totals[c]||0;
     const budget = getBudget(monthKey, c);
-    const {barClass, pct, remainHtml} = computeGauge(spent, budget);
+    const {remainHtml} = computeGauge(spent, budget);
     return `<div class="cat-row" data-cat="${escapeHtml(c)}">
       <div class="cat-top">
         <div class="cat-name">${escapeHtml(c)}</div>
         ${budget>0 ? `<div class="cat-budget-ref">予算 ${yen(budget)}</div>` : ""}
       </div>
-      <div class="cat-bar-track"><div class="cat-bar-fill ${barClass}" style="width:${pct}%;"></div></div>
       <div class="cat-bottom">
         <span class="cat-amt">利用 ${yen(spent)}</span>
         ${remainHtml}
