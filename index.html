@@ -67,6 +67,14 @@
 
   .grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .grid.g1{ grid-template-columns:1fr; }
+
+  @media (max-width: 400px){
+    .grid{ grid-template-columns:1fr; }
+    .seg-toggle{ flex-direction:column; }
+    .cat-top{ flex-wrap:wrap; }
+    .cat-budget-input{ width:100%; }
+    .cat-budget-input input{ flex:1; width:auto; }
+  }
   label.field{ display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--ink-soft); font-weight:700; }
   input,select,textarea{
     font-family:inherit; font-size:14.5px; padding:9px 10px; border:1px solid var(--line);
@@ -116,6 +124,7 @@
   .cat-top{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
   .cat-name{ font-size:13px; font-weight:700; flex:1; min-width:0; }
   .cat-budget-input{ display:flex; align-items:center; gap:4px; flex-shrink:0; }
+  .cat-budget-ref{ font-size:12px; color:var(--ink-soft); font-weight:700; flex-shrink:0; }
   .cat-budget-input .yen-mark{ font-size:11.5px; color:var(--ink-soft); }
   .cat-budget-input input{
     width:82px; padding:5px 7px; font-size:12.5px; text-align:right; border-radius:7px;
@@ -140,31 +149,39 @@
   .total-box .val{ font-size:22px; font-weight:800; color:var(--teal-deep); }
 
   .card-sched{ border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
-  .card-sched .head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-  .card-sched .head .name{ font-weight:800; font-size:14px; color:var(--teal-deep); }
-  .sched-line{ display:flex; justify-content:space-between; font-size:12.5px; padding:5px 0; border-bottom:1px dashed var(--line); }
+  .card-sched .head{ display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:6px 10px; margin-bottom:8px; }
+  .card-sched .head .name{ font-weight:800; font-size:14px; color:var(--teal-deep); flex:1; min-width:0; overflow-wrap:break-word; }
+  .sched-line{ display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:4px 8px; font-size:12.5px; padding:5px 0; border-bottom:1px dashed var(--line); }
   .sched-line:last-child{ border-bottom:none; }
   .sched-line .d{ color:var(--ink-soft); }
-  .sched-line .a{ font-weight:700; font-variant-numeric:tabular-nums; }
-  .sched-badge{ font-size:10.5px; font-weight:800; padding:1px 7px; border-radius:20px; margin-right:6px; }
+  .sched-line .a{ font-weight:700; font-variant-numeric:tabular-nums; flex-shrink:0; }
+  .sched-badge{ font-size:10.5px; font-weight:800; padding:1px 7px; border-radius:20px; margin-right:6px; display:inline-block; }
   .sched-badge.next{ background:var(--gold-soft); color:#7a5c15; }
   .sched-badge.holiday{ background:var(--red-soft); color:var(--red); }
 
   .list-item{
-    display:flex; justify-content:space-between; align-items:center; padding:10px 0;
-    border-bottom:1px solid var(--line); gap:8px;
+    display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; padding:10px 0;
+    border-bottom:1px solid var(--line); gap:6px 8px;
   }
   .list-item:last-child{ border-bottom:none; }
-  .list-item .main{ flex:1; min-width:0; }
+  .list-item .main{ flex:1 1 160px; min-width:0; overflow-wrap:break-word; }
   .list-item .main .t1{ font-size:13.5px; font-weight:700; }
   .list-item .main .t2{ font-size:11.5px; color:var(--ink-soft); margin-top:2px; }
-  .list-item .amt{ font-weight:800; font-size:14px; white-space:nowrap; }
-  .list-item .actions{ display:flex; gap:4px; }
+  .list-item .amt{ font-weight:800; font-size:14px; white-space:nowrap; flex-shrink:0; }
+  .list-item .actions{ display:flex; gap:4px; flex-shrink:0; }
   .icon-btn{
     appearance:none; border:1px solid var(--line); background:#fff; border-radius:8px; width:30px; height:30px;
-    font-size:13px; cursor:pointer; color:var(--ink-soft);
+    font-size:13px; cursor:pointer; color:var(--ink-soft); flex-shrink:0;
   }
   .icon-btn:hover{ background:var(--teal-soft); color:var(--teal-deep); }
+
+  .seg-toggle{ display:flex; gap:8px; margin-bottom:14px; }
+  .seg-btn{
+    flex:1; appearance:none; border:1px solid var(--line); background:#fff; color:var(--ink-soft);
+    padding:10px 8px; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer;
+  }
+  .seg-btn.active{ background:var(--teal-deep); border-color:var(--teal-deep); color:#fff; }
+  .seg-btn.active[data-type="income"]{ background:var(--gold); border-color:var(--gold); color:#3a2e10; }
 
   .subtabs{ display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
   .subtabs button{
@@ -207,6 +224,7 @@
 <nav class="tabs" id="main-tabs">
   <button data-page="page-entry" class="active">入力</button>
   <button data-page="page-status">状況</button>
+  <button data-page="page-budget">予算</button>
   <button data-page="page-schedule">支払予定</button>
   <button data-page="page-subs">サブスク</button>
   <button data-page="page-cards">カード設定</button>
@@ -219,13 +237,17 @@
   <div class="page active" id="page-entry">
     <div class="panel">
       <h2>利用を記録する</h2>
-      <p class="note">日付・支払方法・金額・用途を入れると自動で保存されます。支払予定日はカード設定から自動計算されます。</p>
+      <p class="note">日付・支払方法・金額・用途を入れると自動で保存されます。支払予定日はカード設定から自動計算されます。立て替えが戻ってきたときは「入金・精算」を選ぶと、その用途の利用額からマイナスされます。</p>
+      <div class="seg-toggle" id="in-type-toggle">
+        <button type="button" class="seg-btn active" data-type="expense">💸 支出（使った）</button>
+        <button type="button" class="seg-btn" data-type="income">💰 入金・精算（戻ってきた）</button>
+      </div>
       <div class="grid">
         <label class="field">利用日
           <input type="date" id="in-date">
         </label>
         <label class="field">金額（円）
-          <input type="number" id="in-amount" placeholder="例: 850" inputmode="numeric">
+          <input type="number" id="in-amount" placeholder="例: 850" inputmode="numeric" min="0">
         </label>
         <label class="field">支払方法
           <select id="in-method"></select>
@@ -266,12 +288,30 @@
         <div class="label" id="status-month-label">-</div>
         <button id="status-next">›</button>
       </div>
-      <h2>用途別の利用状況・予算</h2>
-      <p class="note">各用途の「予算¥」欄にその月の予算を入力すると、利用額に応じてゲージが伸び、残り金額が表示されます。月が変わると前月の予算を引き継いで表示されるので、必要に応じて月初に金額を調整してください。サブスク・固定費は登録済みサブスクの請求予定から計算します。</p>
+      <h2>用途別の利用状況</h2>
+      <p class="note">選択した月の利用額を用途ごとに集計します。予算を設定している用途はゲージと残り金額も表示されます（予算の設定・変更は「予算」タブで行えます）。サブスク・固定費は登録済みサブスクの請求予定から計算します。</p>
       <div id="status-cats"></div>
       <div class="total-box">
         <div class="lbl">合計</div>
         <div class="val" id="status-total">¥0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 予算 ============ -->
+  <div class="page" id="page-budget">
+    <div class="panel">
+      <div class="month-switch">
+        <button id="budget-prev">‹</button>
+        <div class="label" id="budget-month-label">-</div>
+        <button id="budget-next">›</button>
+      </div>
+      <h2>用途別の予算を組む</h2>
+      <p class="note">その月の予算を用途ごとに入力してください。月が変わると前月の予算を引き継いで表示されるので、必要な用途だけ月初に金額を調整すればOKです。ここで設定した予算は「状況」タブのゲージに反映されます。</p>
+      <div id="budget-cats"></div>
+      <div class="total-box">
+        <div class="lbl">予算合計</div>
+        <div class="val" id="budget-total">¥0</div>
       </div>
     </div>
   </div>
@@ -657,7 +697,7 @@ function fillSelect(sel, items, selected){
 function escapeHtml(s){
   return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
-function yen(n){ return "¥"+Math.round(n).toLocaleString("ja-JP"); }
+function yen(n){ const v=Math.round(n); const sign = v<0 ? "-" : ""; return sign+"¥"+Math.abs(v).toLocaleString("ja-JP"); }
 
 /* ============================================================
    タブ切り替え
@@ -684,6 +724,14 @@ document.getElementById("settings-subtabs").addEventListener("click",(e)=>{
    入力タブ: 取引 CRUD
    ============================================================ */
 let editingTxId = null;
+let currentTxType = "expense"; // "expense" | "income"
+
+document.getElementById("in-type-toggle").addEventListener("click",(e)=>{
+  const btn = e.target.closest(".seg-btn"); if(!btn) return;
+  currentTxType = btn.dataset.type;
+  document.querySelectorAll("#in-type-toggle .seg-btn").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+});
 
 function renderEntryForm(){
   fillSelect(document.getElementById("in-method"), STATE.pulldowns.methods);
@@ -698,12 +746,13 @@ function renderEntryForm(){
 
 document.getElementById("btn-add-tx").addEventListener("click", ()=>{
   const date = document.getElementById("in-date").value;
-  const amount = Number(document.getElementById("in-amount").value);
+  const rawAmount = Math.abs(Number(document.getElementById("in-amount").value));
+  const amount = currentTxType==="income" ? -rawAmount : rawAmount;
   const method = document.getElementById("in-method").value;
   const category = document.getElementById("in-category").value;
   const detail = document.getElementById("in-detail").value.trim();
   const msg = document.getElementById("tx-status");
-  if(!date || !amount || !method || !category){
+  if(!date || !rawAmount || !method || !category){
     msg.textContent = "日付・金額・支払方法・用途をすべて入力してください。";
     msg.classList.remove("hidden"); msg.classList.add("err");
     return;
@@ -720,16 +769,22 @@ document.getElementById("btn-add-tx").addEventListener("click", ()=>{
   saveState();
   document.getElementById("in-amount").value="";
   document.getElementById("in-detail").value="";
+  setTxType("expense");
   msg.classList.remove("err");
   msg.textContent = "保存しました。";
   msg.classList.remove("hidden");
   setTimeout(()=>msg.classList.add("hidden"), 2000);
   renderAll();
 });
+function setTxType(type){
+  currentTxType = type;
+  document.querySelectorAll("#in-type-toggle .seg-btn").forEach(b=>b.classList.toggle("active", b.dataset.type===type));
+}
 document.getElementById("btn-cancel-edit-tx").addEventListener("click", ()=>{
   editingTxId = null;
   document.getElementById("in-amount").value="";
   document.getElementById("in-detail").value="";
+  setTxType("expense");
   document.getElementById("btn-add-tx").textContent = "＋ 記録する";
   document.getElementById("btn-cancel-edit-tx").style.display="none";
 });
@@ -744,13 +799,13 @@ function renderTxList(){
   const wrap = document.getElementById("tx-list");
   if(list.length===0){ wrap.innerHTML = `<div class="empty">この条件の利用履歴はまだありません。</div>`; return; }
   wrap.innerHTML = list.map(t=>{
-    const isMinus = t.amount<0;
+    const isIncome = t.amount<0;
     return `<div class="list-item" data-id="${t.id}">
       <div class="main">
-        <div class="t1">${escapeHtml(t.date)} ・ <span class="tag">${escapeHtml(t.category)}</span></div>
+        <div class="t1">${escapeHtml(t.date)} ・ <span class="tag">${escapeHtml(t.category)}</span>${isIncome? ` <span class="tag gold">入金・精算</span>`:""}</div>
         <div class="t2">${escapeHtml(t.method)}${t.detail? " ・ "+escapeHtml(t.detail):""}</div>
       </div>
-      <div class="amt ${isMinus?"amt-minus":"amt-plus"}">${yen(t.amount)}</div>
+      <div class="amt ${isIncome?"amt-plus":""}">${yen(t.amount)}</div>
       <div class="actions">
         <button class="icon-btn" data-act="edit-tx">✎</button>
         <button class="icon-btn" data-act="del-tx">🗑</button>
@@ -770,10 +825,11 @@ document.getElementById("tx-list").addEventListener("click",(e)=>{
   } else if(act==="edit-tx"){
     const t = STATE.transactions.find(x=>x.id===id); if(!t) return;
     document.getElementById("in-date").value = t.date;
-    document.getElementById("in-amount").value = t.amount;
+    document.getElementById("in-amount").value = Math.abs(t.amount);
     document.getElementById("in-method").value = t.method;
     document.getElementById("in-category").value = t.category;
     document.getElementById("in-detail").value = t.detail||"";
+    setTxType(t.amount<0 ? "income" : "expense");
     editingTxId = id;
     document.getElementById("btn-add-tx").textContent = "✎ 更新する";
     document.getElementById("btn-cancel-edit-tx").style.display="inline-block";
@@ -784,30 +840,31 @@ document.getElementById("tx-filter-month").addEventListener("change", renderTxLi
 document.getElementById("tx-filter-method").addEventListener("change", renderTxList);
 
 /* ============================================================
-   状況タブ
+   状況タブ・予算タブ（共通の表示月を使う）
    ============================================================ */
-let statusMonth = null; // {y,m}
-function initStatusMonth(){
-  if(statusMonth) return;
+let viewMonth = null; // {y,m}
+function initViewMonth(){
+  if(viewMonth) return;
   const n = new Date();
-  statusMonth = {y:n.getFullYear(), m:n.getMonth()+1};
+  viewMonth = {y:n.getFullYear(), m:n.getMonth()+1};
 }
-document.getElementById("status-prev").addEventListener("click",()=>{
-  initStatusMonth();
-  const [y,m]=addMonths(statusMonth.y, statusMonth.m, -1); statusMonth={y,m}; renderStatusPage();
-});
-document.getElementById("status-next").addEventListener("click",()=>{
-  initStatusMonth();
-  const [y,m]=addMonths(statusMonth.y, statusMonth.m, 1); statusMonth={y,m}; renderStatusPage();
-});
-function renderStatusPage(){
-  initStatusMonth();
-  document.getElementById("status-month-label").textContent = statusMonth.y+"年"+statusMonth.m+"月";
-  const monthStart = new Date(statusMonth.y, statusMonth.m-1, 1);
-  const monthEnd = new Date(statusMonth.y, statusMonth.m-1, monthEndDay(statusMonth.y,statusMonth.m));
-  const monthPrefix = statusMonth.y+"-"+pad2(statusMonth.m);
-  const monthKey = monthKeyOf(statusMonth.y, statusMonth.m);
-  ensureBudgetsForMonth(monthKey);
+function changeViewMonth(delta){
+  initViewMonth();
+  const [y,m] = addMonths(viewMonth.y, viewMonth.m, delta);
+  viewMonth = {y,m};
+  renderStatusPage();
+  renderBudgetPage();
+}
+document.getElementById("status-prev").addEventListener("click", ()=>changeViewMonth(-1));
+document.getElementById("status-next").addEventListener("click", ()=>changeViewMonth(1));
+document.getElementById("budget-prev").addEventListener("click", ()=>changeViewMonth(-1));
+document.getElementById("budget-next").addEventListener("click", ()=>changeViewMonth(1));
+
+function monthSpendTotals(){
+  initViewMonth();
+  const monthStart = new Date(viewMonth.y, viewMonth.m-1, 1);
+  const monthEnd = new Date(viewMonth.y, viewMonth.m-1, monthEndDay(viewMonth.y,viewMonth.m));
+  const monthPrefix = viewMonth.y+"-"+pad2(viewMonth.m);
 
   const totals = {};
   STATE.pulldowns.categories.forEach(c=>totals[c]=0);
@@ -819,7 +876,6 @@ function renderStatusPage(){
     if(t.category===SUBSCRIPTION_CATEGORY) return; // サブスクは別集計
     totals[t.category] = (totals[t.category]||0) + t.amount;
   });
-  // サブスク・固定費: 有効なサブスクの当月発生分
   let subTotal = 0;
   STATE.subscriptions.forEach(s=>{
     if(s.status!=="有効") return;
@@ -828,31 +884,43 @@ function renderStatusPage(){
   });
   totals[SUBSCRIPTION_CATEGORY] = (totals[SUBSCRIPTION_CATEGORY]||0) + subTotal;
   grand += subTotal;
+  return {totals, grand};
+}
+
+function computeGauge(spent, budget){
+  let barClass = "", pct = 0, remainHtml = `<span class="cat-remain none">予算未設定</span>`;
+  if(budget>0){
+    const ratio = spent/budget;
+    pct = Math.min(100, Math.max(0, ratio*100));
+    if(ratio>1){
+      barClass = "over";
+      remainHtml = `<span class="cat-remain over">予算超過 ${yen(spent-budget)}</span>`;
+    } else if(ratio>=0.8){
+      barClass = "warn";
+      remainHtml = `<span class="cat-remain warn">残り ${yen(budget-spent)}</span>`;
+    } else {
+      remainHtml = `<span class="cat-remain ok">残り ${yen(budget-spent)}</span>`;
+    }
+  }
+  return {barClass, pct, remainHtml};
+}
+
+function renderStatusPage(){
+  initViewMonth();
+  document.getElementById("status-month-label").textContent = viewMonth.y+"年"+viewMonth.m+"月";
+  const monthKey = monthKeyOf(viewMonth.y, viewMonth.m);
+  ensureBudgetsForMonth(monthKey);
+  const {totals, grand} = monthSpendTotals();
 
   const wrap = document.getElementById("status-cats");
   wrap.innerHTML = STATE.pulldowns.categories.map(c=>{
     const spent = totals[c]||0;
     const budget = getBudget(monthKey, c);
-    let barClass = "", pct = 0, remainHtml = `<span class="cat-remain none">予算未設定</span>`;
-    if(budget>0){
-      const ratio = spent/budget;
-      pct = Math.min(100, Math.max(0, ratio*100));
-      if(ratio>1){
-        barClass = "over";
-        remainHtml = `<span class="cat-remain over">予算超過 ${yen(spent-budget)}</span>`;
-      } else if(ratio>=0.8){
-        barClass = "warn";
-        remainHtml = `<span class="cat-remain warn">残り ${yen(budget-spent)}</span>`;
-      } else {
-        remainHtml = `<span class="cat-remain ok">残り ${yen(budget-spent)}</span>`;
-      }
-    } else if(spent<0){
-      pct = 0;
-    }
+    const {barClass, pct, remainHtml} = computeGauge(spent, budget);
     return `<div class="cat-row" data-cat="${escapeHtml(c)}">
       <div class="cat-top">
         <div class="cat-name">${escapeHtml(c)}</div>
-        <div class="cat-budget-input"><span class="yen-mark">予算¥</span><input type="number" min="0" step="100" class="budget-input" data-cat="${escapeHtml(c)}" value="${budget||""}" placeholder="未設定"></div>
+        ${budget>0 ? `<div class="cat-budget-ref">予算 ${yen(budget)}</div>` : ""}
       </div>
       <div class="cat-bar-track"><div class="cat-bar-fill ${barClass}" style="width:${pct}%;"></div></div>
       <div class="cat-bottom">
@@ -863,12 +931,42 @@ function renderStatusPage(){
   }).join("");
   document.getElementById("status-total").textContent = yen(grand);
 }
-document.getElementById("status-cats").addEventListener("change",(e)=>{
+
+function renderBudgetPage(){
+  initViewMonth();
+  document.getElementById("budget-month-label").textContent = viewMonth.y+"年"+viewMonth.m+"月";
+  const monthKey = monthKeyOf(viewMonth.y, viewMonth.m);
+  ensureBudgetsForMonth(monthKey);
+  const {totals} = monthSpendTotals();
+
+  const wrap = document.getElementById("budget-cats");
+  let budgetTotal = 0;
+  wrap.innerHTML = STATE.pulldowns.categories.map(c=>{
+    const budget = getBudget(monthKey, c);
+    const spent = totals[c]||0;
+    budgetTotal += budget;
+    const {barClass, pct, remainHtml} = computeGauge(spent, budget);
+    return `<div class="cat-row" data-cat="${escapeHtml(c)}">
+      <div class="cat-top">
+        <div class="cat-name">${escapeHtml(c)}</div>
+        <div class="cat-budget-input"><span class="yen-mark">¥</span><input type="number" min="0" step="100" class="budget-input" data-cat="${escapeHtml(c)}" value="${budget||""}" placeholder="未設定"></div>
+      </div>
+      <div class="cat-bar-track"><div class="cat-bar-fill ${barClass}" style="width:${pct}%;"></div></div>
+      <div class="cat-bottom">
+        <span class="cat-amt">利用 ${yen(spent)}</span>
+        ${remainHtml}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("budget-total").textContent = yen(budgetTotal);
+}
+document.getElementById("budget-cats").addEventListener("change",(e)=>{
   const input = e.target.closest("input.budget-input"); if(!input) return;
   const cat = input.dataset.cat;
-  const monthKey = monthKeyOf(statusMonth.y, statusMonth.m);
+  const monthKey = monthKeyOf(viewMonth.y, viewMonth.m);
   const val = Number(input.value)||0;
   setBudget(monthKey, cat, val);
+  renderBudgetPage();
   renderStatusPage();
 });
 
@@ -1267,6 +1365,7 @@ function renderAll(){
   renderEntryForm();
   renderTxList();
   renderStatusPage();
+  renderBudgetPage();
   renderSchedulePage();
   renderSubForm();
   renderSubList();
