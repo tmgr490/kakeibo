@@ -478,6 +478,47 @@ try{
   .pay-item .a{ font-weight:700; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .pay-item .a.in{ color:var(--accent); }
 
+  /* --- カレンダー --- */
+  .cal-head{ display:grid; grid-template-columns:repeat(7,1fr); gap:3px; margin-bottom:4px; }
+  .cal-head div{ text-align:center; font-size:10.5px; font-weight:800; color:var(--ink-faint); padding:3px 0; }
+  .cal-head .sun{ color:var(--red); } .cal-head .sat{ color:var(--accent); }
+  .cal{ display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+  .cal-cell{
+    position:relative; aspect-ratio:1/1.05; border:1px solid var(--line); border-radius:8px;
+    background:var(--surface); padding:3px 2px 2px; cursor:pointer; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:1px;
+    min-height:44px;
+  }
+  .cal-cell.empty{ border-color:transparent; background:transparent; cursor:default; }
+  .cal-cell.none{ color:var(--ink-faint); }
+  .cal-cell.today{ border-color:var(--accent); border-width:2px; }
+  .cal-cell:active:not(.empty){ background:var(--surface-2); }
+  /* 塗りは絶対配置なので、数字側にも重なり順を与えないと隠れる */
+  .cal-cell .d{ position:relative; z-index:1; font-size:10.5px; font-weight:800; line-height:1.1; }
+  .cal-cell .d.sun{ color:var(--red); } .cal-cell .d.sat{ color:var(--accent); }
+  .cal-cell .bar{ position:absolute; inset:0; background:var(--s2); z-index:0; }
+  .cal-cell .v{ position:relative; z-index:1; font-size:9.5px; font-weight:800;
+                font-variant-numeric:tabular-nums; color:var(--ink); }
+  .cal-cell .v.muted{ color:var(--ink-faint); }
+  .cal-cell .pay{ position:relative; z-index:1; font-size:8px; line-height:1; }
+  @media (min-width: 900px){ .cal-cell{ aspect-ratio:1/0.8; min-height:60px; }
+    .cal-cell .d{ font-size:12px; } .cal-cell .v{ font-size:11px; } }
+
+  /* --- テンプレート --- */
+  .chip.tpl{ display:inline-flex; align-items:center; gap:6px; }
+  .tpl-amt{ font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums; }
+  .chip[aria-pressed="true"] .tpl-amt{ color:rgba(255,255,255,.75); }
+
+  /* --- 年間サマリー --- */
+  .yr-row{ display:flex; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); font-size:13px; }
+  .yr-row:last-child{ border-bottom:none; }
+  .yr-row .sw{ width:9px; height:22px; border-radius:4px; flex:0 0 auto; }
+  .yr-row .nm{ flex:1; min-width:0; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .yr-row .av{ font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .yr-row .tt{ font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; min-width:86px; text-align:right; }
+  .yr-row .df{ font-size:11px; font-variant-numeric:tabular-nums; flex:0 0 auto; min-width:62px; text-align:right; }
+  .yr-row .df.up{ color:var(--red); } .yr-row .df.down{ color:var(--accent); }
+
   /* --- 口座ごとの引落まとめ --- */
   .acc-block{ padding:10px 0; border-bottom:1px solid var(--line); }
   .acc-block:last-child{ border-bottom:none; }
@@ -1282,6 +1323,103 @@ Sel.pace = memo(function(monthKey){
   };
 });
 
+/** よく使う入力の候補。直近60日で頻度の高い「用途×支払方法×メモ」を拾う。
+ *  手で登録したテンプレートを先に、足りない分を自動の候補で埋める。 */
+Sel.templates = memo(function(){
+  const saved = Store.state.templates || [];
+  const since = fmt(new Date(Date.now() - 60*86400000));
+  const freq = new Map();
+  for (const t of Store.state.transactions){
+    if (t.date < since || t.type !== "expense") continue;
+    const key = t.categoryId + "|" + t.methodId + "|" + (t.detail || "");
+    if (!freq.has(key)) freq.set(key, { n:0, sum:0, categoryId:t.categoryId, methodId:t.methodId, detail:t.detail || "" });
+    const e = freq.get(key); e.n++; e.sum += t.amount;
+  }
+  const isSaved = x => saved.some(s =>
+    s.categoryId === x.categoryId && s.methodId === x.methodId && (s.detail || "") === x.detail);
+
+  const auto = Array.from(freq.values())
+    .filter(x => x.n >= 2 && !isSaved(x))          // 1回きりのものは候補にしない
+    .sort((a,b) => b.n - a.n)
+    .slice(0, Math.max(0, 4 - saved.length))
+    .map(x => ({ id:"auto:" + x.categoryId + "|" + x.methodId + "|" + x.detail,
+                 label: x.detail || Sel.cat(x.categoryId).name,
+                 amount: Math.round(x.sum / x.n),  // よく使う金額を初期値にする
+                 categoryId:x.categoryId, methodId:x.methodId, detail:x.detail, auto:true, n:x.n }));
+
+  return saved.map(s => Object.assign({}, s, { auto:false })).concat(auto);
+});
+
+/** カレンダー用。その月の日ごとの支出額と、カードの引き落とし日。 */
+Sel.calendar = memo(function(monthKey){
+  const [y,m] = monthKey.split("-").map(Number);
+  const [a,b] = monthRange(monthKey);
+  const entries = Sel.entriesInRange(a,b);
+
+  const byDay = {};
+  for (const e of entries){
+    const d = Number(e.date.slice(8));
+    if (!byDay[d]) byDay[d] = { spend:0, income:0, n:0 };
+    if (e.type === "income"){
+      if (e.incomeKind === "earning") byDay[d].income += e.amount;
+      else byDay[d].spend -= e.amount;
+    } else byDay[d].spend += e.amount;
+    byDay[d].n++;
+  }
+
+  // 引き落とし日に印を付ける
+  const pays = {};
+  for (const mt of Sel.activeMethods()){
+    if (!mt.billing) continue;
+    const sc = Sel.cardSchedule(mt.id);
+    if (!sc) continue;
+    for (const g of sc.groups){
+      if (!g.payDate.startsWith(monthKey)) continue;
+      const d = Number(g.payDate.slice(8));
+      if (!pays[d]) pays[d] = { total:0, names:[] };
+      pays[d].total += g.total; pays[d].names.push(mt.name);
+    }
+  }
+
+  const days = monthEndDay(y,m);
+  const lead = new Date(y, m-1, 1).getDay();       // 月初の曜日ぶん空ける
+  const cells = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= days; d++){
+    cells.push({ d, date: monthKey + "-" + pad2(d), ...(byDay[d] || { spend:0, income:0, n:0 }),
+                 pay: pays[d] || null,
+                 weekend: [0,6].includes(new Date(y,m-1,d).getDay()),
+                 holiday: !!Store.state.holidays[monthKey + "-" + pad2(d)] });
+  }
+  const max = Math.max(1, ...cells.filter(Boolean).map(c => c.spend));
+  return { cells, max, days };
+});
+
+/** 年間サマリー。用途別の年計・月平均と、前年との比較。 */
+Sel.annual = memo(function(year){
+  const cats = Sel.activeCategories();
+  const rows = cats.map(c => ({ id:c.id, name:c.name, icon:c.icon, colorSlot:c.colorSlot, total:0, prev:0 }));
+  const idx = new Map(rows.map(r => [r.id, r]));
+  let total = 0, income = 0, prevTotal = 0, months = 0;
+
+  for (let m = 1; m <= 12; m++){
+    const mk = year + "-" + pad2(m);
+    const t = Sel.monthTotals(mk);
+    if (t.expense !== 0 || t.income !== 0) months++;
+    total += t.expense; income += t.income;
+    Object.entries(t.totals).forEach(([id,v]) => { const r = idx.get(id); if (r) r.total += v; });
+
+    const p = Sel.monthTotals((Number(year)-1) + "-" + pad2(m));
+    prevTotal += p.expense;
+    Object.entries(p.totals).forEach(([id,v]) => { const r = idx.get(id); if (r) r.prev += v; });
+  }
+  return {
+    year, total, income, net: income - total, prevTotal, months,
+    avg: months ? total / months : 0,
+    rows: rows.filter(r => r.total !== 0 || r.prev !== 0).sort((a,b) => b.total - a.total),
+  };
+});
+
 /** サブスクの月次換算。v1は「月次のものだけ単純合計」していて、
  *  週次と年次を黙って無視していた。ここでは正しく換算する。 */
 Sel.monthlyEquivalent = sub => {
@@ -1714,6 +1852,22 @@ View.entrySheet = function(){
       <button data-act="entry:save" class="save" style="grid-row:auto">保存</button>
     </div>
 
+    ${(() => {
+      const tpl = Sel.templates();
+      if (!tpl.length || Entry.editId) return "";
+      return html`
+        <div style="margin-top:14px">
+          <div class="note mb0" style="margin-bottom:4px">よく使う入力</div>
+          <div class="chip-row">
+            ${tpl.map(t => html`
+              <button class="chip tpl" data-act="entry:tpl" data-id="${t.id}">
+                <span class="dot" style="background:${raw(slotVar(Sel.cat(t.categoryId).colorSlot))}"></span>${t.label}
+                ${t.amount ? html`<span class="tpl-amt">${yen(t.amount)}</span>` : ""}
+              </button>`)}
+          </div>
+        </div>`;
+    })()}
+
     <div style="margin-top:14px">
       <div class="note mb0" style="margin-bottom:4px">用途</div>
       <div class="chip-row">
@@ -1736,7 +1890,11 @@ View.entrySheet = function(){
         </label>
       </div>
 
-      ${Entry.editId ? raw(html`<div class="btn-row"><button class="btn danger small" data-act="tx:delete" data-id="${Entry.editId}">この記録を削除</button></div>`) : ""}
+      <div class="btn-row">
+        ${Entry.editId
+          ? html`<button class="btn danger small" data-act="tx:delete" data-id="${Entry.editId}">この記録を削除</button>`
+          : html`<button class="btn ghost small" data-act="entry:savetpl">★ この組み合わせをよく使う入力に登録</button>`}
+      </div>
     </div>
   `);
 };
@@ -1754,27 +1912,32 @@ View.status = function(){
   const [y,m] = mk.split("-").map(Number);
   const { expense, income, net } = Sel.monthTotals(mk);
 
+  // 年間タブは年単位の話なので、月送りと月の収支は出さない（年送りは本体側にある）
+  const isAnnual = StatusUI.tab === "annual";
   const head = html`
     <div class="panel">
-      <div class="month-switch">
-        <button data-act="status:month" data-d="-1" aria-label="前の月">‹</button>
-        <div class="label num">${y}年${m}月</div>
-        <button data-act="status:month" data-d="1" aria-label="次の月">›</button>
-      </div>
-      <div class="sum3">
-        <div><div class="k">支出</div><div class="v ex">${yen(expense)}</div></div>
-        <div><div class="k">収入</div><div class="v in">${yen(income)}</div></div>
-        <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
-      </div>
-      <div class="seg" role="group" aria-label="表示切替" style="margin-top:12px">
+      ${isAnnual ? "" : html`
+        <div class="month-switch">
+          <button data-act="status:month" data-d="-1" aria-label="前の月">‹</button>
+          <div class="label num">${y}年${m}月</div>
+          <button data-act="status:month" data-d="1" aria-label="次の月">›</button>
+        </div>
+        <div class="sum3">
+          <div><div class="k">支出</div><div class="v ex">${yen(expense)}</div></div>
+          <div><div class="k">収入</div><div class="v in">${yen(income)}</div></div>
+          <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
+        </div>`}
+      <div class="seg" role="group" aria-label="表示切替" style="${isAnnual ? "" : "margin-top:12px"}">
         <button data-act="status:tab" data-v="breakdown" aria-pressed="${String(StatusUI.tab==="breakdown")}">内訳</button>
         <button data-act="status:tab" data-v="budget"    aria-pressed="${String(StatusUI.tab==="budget")}">予算</button>
         <button data-act="status:tab" data-v="trend"     aria-pressed="${String(StatusUI.tab==="trend")}">推移</button>
+        <button data-act="status:tab" data-v="annual"    aria-pressed="${String(StatusUI.tab==="annual")}">年間</button>
       </div>
     </div>`;
 
   const body = StatusUI.tab === "budget" ? View._budget(mk)
              : StatusUI.tab === "trend"  ? View._trend(mk)
+             : StatusUI.tab === "annual" ? View._annual(mk)
              : View._breakdown(mk);
   mount(host, html`${head}${body}`);
 };
@@ -1877,6 +2040,53 @@ View._budget = function(mk){
     </div>`;
 };
 
+View._annual = function(mk){
+  const year = mk.slice(0,4);
+  const a = Sel.annual(year);
+  const diff = a.total - a.prevTotal;
+  const hasPrev = a.prevTotal > 0;
+
+  return html`
+    <div class="panel">
+      <div class="month-switch">
+        <button data-act="status:year" data-d="-1" aria-label="前の年">‹</button>
+        <div class="label num">${year}年</div>
+        <button data-act="status:year" data-d="1" aria-label="次の年">›</button>
+      </div>
+      <div class="sum3">
+        <div><span class="k">年間の支出</span><span class="v ex">${yen(a.total)}</span></div>
+        <div><span class="k">年間の収入</span><span class="v in">${yen(a.income)}</span></div>
+        <div><span class="k">年間の収支</span><span class="v" style="color:${a.net>=0?"var(--accent)":"var(--red)"}">${yen(a.net)}</span></div>
+      </div>
+      <div class="pace" style="margin-top:12px">
+        <div><div class="k">記録のある月</div><div class="v">${a.months}ヶ月</div></div>
+        <div><div class="k">月平均の支出</div><div class="v">${yen(a.avg)}</div></div>
+        ${hasPrev
+          ? html`<div><div class="k">前年との差</div>
+                   <div class="v" style="color:${diff>0?"var(--red)":"var(--accent)"}">${diff>0?"+":""}${yen(diff)}</div></div>`
+          : ""}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>用途別の年計</h2>
+      <p class="note">${hasPrev ? "右端は前年との差です。" : "前年の記録がないので、前年比は出していません。"}</p>
+      ${a.rows.length === 0
+        ? html`<div class="empty" style="padding:22px">${year}年の記録がありません。</div>`
+        : a.rows.map(r => {
+            const d = r.total - r.prev;
+            return html`
+              <div class="yr-row">
+                <span class="sw" style="background:${raw(slotVar(r.colorSlot))}"></span>
+                <span class="nm">${(r.icon ? r.icon + " " : "") + r.name}</span>
+                <span class="av">月 ${yen(a.months ? r.total / a.months : 0)}</span>
+                <span class="tt">${yen(r.total)}</span>
+                ${hasPrev ? html`<span class="df ${d > 0 ? "up" : d < 0 ? "down" : ""}">${d === 0 ? "±0" : (d > 0 ? "+" : "") + yen(d)}</span>` : ""}
+              </div>`;
+          })}
+    </div>`;
+};
+
 View._trend = function(mk){
   const data = Sel.trend(mk, 12);
   const spent = data.map(d => d.expense).filter(v => v > 0);
@@ -1923,9 +2133,10 @@ View._trend = function(mk){
 };
 
 /* --- 履歴 --- */
-const HistoryUI = { month: null, q:"", methodId:"", categoryId:"" };
+const HistoryUI = { month: null, q:"", methodId:"", categoryId:"", mode:"list", min:"", max:"" };
 
 View.history = function(){
+  if (HistoryUI.mode === "calendar") return View._calendar();
   const host = $('[data-route="history"]');
   if (!HistoryUI.month){
     const n = new Date(); HistoryUI.month = monthKeyOf(n.getFullYear(), n.getMonth()+1);
@@ -1939,6 +2150,10 @@ View.history = function(){
     (e.label||"").toLowerCase().includes(q) || Sel.cat(e.categoryId).name.toLowerCase().includes(q));
   if (HistoryUI.methodId)   entries = entries.filter(e => e.methodId === HistoryUI.methodId);
   if (HistoryUI.categoryId) entries = entries.filter(e => e.categoryId === HistoryUI.categoryId);
+  const min = Number(HistoryUI.min), max = Number(HistoryUI.max);
+  if (HistoryUI.min !== "" && Number.isFinite(min)) entries = entries.filter(e => e.amount >= min);
+  if (HistoryUI.max !== "" && Number.isFinite(max)) entries = entries.filter(e => e.amount <= max);
+  const filtered = !!(q || HistoryUI.methodId || HistoryUI.categoryId || HistoryUI.min !== "" || HistoryUI.max !== "");
 
   // 日ごとにまとめる
   const days = [];
@@ -1959,7 +2174,19 @@ View.history = function(){
         <div class="label num">${y}年${m}月</div>
         <button data-act="hist:month" data-d="1" aria-label="次の月">›</button>
       </div>
+      <div class="seg" role="group" aria-label="表示" style="margin-bottom:10px">
+        <button data-act="hist:mode" data-v="list"     aria-pressed="${String(HistoryUI.mode==="list")}">一覧</button>
+        <button data-act="hist:mode" data-v="calendar" aria-pressed="${String(HistoryUI.mode==="calendar")}">カレンダー</button>
+      </div>
       <input type="search" id="hist-q" placeholder="🔍 メモ・用途で検索" value="${HistoryUI.q}" data-act="noop">
+      <div class="grid" style="margin-top:8px">
+        <label class="field">金額（以上）
+          <input type="number" id="hist-min" inputmode="numeric" min="0" placeholder="指定なし" value="${HistoryUI.min}">
+        </label>
+        <label class="field">金額（以下）
+          <input type="number" id="hist-max" inputmode="numeric" min="0" placeholder="指定なし" value="${HistoryUI.max}">
+        </label>
+      </div>
       <div class="chip-row" style="margin-top:8px">
         <button class="chip" data-act="hist:mth" data-id="" aria-pressed="${String(!HistoryUI.methodId)}">すべての支払方法</button>
         ${Sel.activeMethods().map(x => html`<button class="chip" data-act="hist:mth" data-id="${x.id}" aria-pressed="${String(HistoryUI.methodId===x.id)}">${x.name}</button>`)}
@@ -1968,14 +2195,15 @@ View.history = function(){
         <button class="chip" data-act="hist:cat" data-id="" aria-pressed="${String(!HistoryUI.categoryId)}">すべての用途</button>
         ${Sel.activeCategories().map(x => html`<button class="chip" data-act="hist:cat" data-id="${x.id}" aria-pressed="${String(HistoryUI.categoryId===x.id)}">${(x.icon?x.icon+" ":"")+x.name}</button>`)}
       </div>
-      <div class="total-box"><div class="lbl">この条件の合計</div><div class="val num">${yen(total)}</div></div>
+      <div class="total-box"><div class="lbl">${filtered ? "この条件の合計" : "この月の合計"}（${entries.length}件）</div><div class="val num">${yen(total)}</div></div>
+      ${filtered ? html`<div class="btn-row"><button class="btn ghost small" data-act="hist:clear">絞り込みを解除</button></div>` : ""}
     </div>
 
     <div class="panel">
       ${days.length === 0
         ? html`<div class="empty"><span class="big">🗒️</span>この月にはまだ記録がありません。<br>右下の ＋ から記録できます。</div>`
         : days.map(d => html`
-            <div class="day-head"><span>${jpDate(d.date)}</span><span class="num">${yen(d.sum)}</span></div>
+            <div class="day-head" data-day="${d.date}"${HistoryUI.focusDate === d.date ? ' style="color:var(--accent)"' : ""}><span>${jpDate(d.date)}</span><span class="num">${yen(d.sum)}</span></div>
             <div class="rows">
               ${d.items.map(e => html`
                 <button class="row" data-act="${e.source==="tx" ? "tx:edit" : "noop"}" data-id="${e.id}">
@@ -1989,6 +2217,58 @@ View.history = function(){
             </div>`)}
     </div>
   `);
+};
+
+/* --- カレンダー: 日ごとの支出と、カードの引き落とし日 --- */
+View._calendar = function(){
+  const host = $('[data-route="history"]');
+  if (!HistoryUI.month){
+    const n = new Date(); HistoryUI.month = monthKeyOf(n.getFullYear(), n.getMonth()+1);
+  }
+  const mk = HistoryUI.month;
+  const [y,m] = mk.split("-").map(Number);
+  // 濃さは 0.14〜0.76 に収める。濃くしすぎると上に載る数字が読めなくなる
+  const { cells, max } = Sel.calendar(mk);
+  const t = Sel.monthTotals(mk);
+  const today = todayStr();
+
+  mount(host, html`
+    <div class="panel">
+      <div class="month-switch">
+        <button data-act="hist:month" data-d="-1" aria-label="前の月">‹</button>
+        <div class="label num">${y}年${m}月</div>
+        <button data-act="hist:month" data-d="1" aria-label="次の月">›</button>
+      </div>
+      <div class="seg" role="group" aria-label="表示">
+        <button data-act="hist:mode" data-v="list"     aria-pressed="${String(HistoryUI.mode==="list")}">一覧</button>
+        <button data-act="hist:mode" data-v="calendar" aria-pressed="${String(HistoryUI.mode==="calendar")}">カレンダー</button>
+      </div>
+      <div class="total-box" style="margin-top:12px">
+        <div class="lbl">この月の支出</div><div class="val num">${yen(t.expense)}</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="note">日付をタップするとその日の記録を開きます。色の濃さは使った額の多さです。🔻 はカードの引き落とし日です。</p>
+      <div class="cal-head">
+        ${WD_JP.map((w,i) => html`<div class="${i===0?"sun":i===6?"sat":""}">${w}</div>`)}
+      </div>
+      <div class="cal">
+        ${cells.map(c => c === null
+          ? html`<div class="cal-cell empty"></div>`
+          : html`
+            <button class="cal-cell${c.date === today ? " today" : ""}${c.n ? "" : " none"}"
+                    data-act="cal:day" data-d="${c.date}"
+                    aria-label="${m}月${c.d}日 支出 ${yen(c.spend)}${c.pay ? " 引き落とし " + yen(c.pay.total) : ""}">
+              <span class="d ${c.holiday || c.weekend ? (new Date(y,m-1,c.d).getDay()===6 ? "sat" : "sun") : ""}">${c.d}</span>
+              ${c.spend > 0
+                ? html`<span class="bar" style="opacity:${(0.14 + 0.62 * (c.spend / max)).toFixed(2)}"></span>
+                       <span class="v">${c.spend >= 10000 ? (c.spend/10000).toFixed(1)+"万" : Math.round(c.spend/100)/10+"千"}</span>`
+                : html`<span class="v muted">${c.income > 0 ? "+" : ""}</span>`}
+              ${c.pay ? html`<span class="pay" title="${c.pay.names.join("・")}">🔻</span>` : ""}
+            </button>`)}
+      </div>
+    </div>`);
 };
 
 /* --- 支払方法の編集シート --- */
@@ -2523,12 +2803,44 @@ const Actions = {
   "entry:close"(){ closeSheet("#sheet-entry"); },
   "sheet:close"(){ closeSheet("#sheet-detail"); },
   "entry:type"({v}){
+    syncEntryInputs();
     if (v === "expense"){ Entry.type = "expense"; }
     else { Entry.type = "income"; Entry.incomeKind = v; }
     View.entrySheet();
   },
-  "entry:cat"({id}){ Entry.categoryId = id; View.entrySheet(); },
-  "entry:mth"({id}){ Entry.methodId = id; View.entrySheet(); },
+  "entry:tpl"({id}){
+    const t = Sel.templates().find(x => x.id === id);
+    if (!t) return;
+    syncEntryInputs();
+    Entry.categoryId = t.categoryId;
+    Entry.methodId   = t.methodId;
+    Entry.detail     = t.detail || "";
+    Entry.type = "expense";
+    // 金額が未入力のときだけ、よく使う金額を入れておく
+    if (Entry.value() === 0 && t.amount){ Entry.acc = null; Entry.op = null; Entry.cur = String(t.amount); }
+    View.entrySheet();
+  },
+  "entry:savetpl"(){
+    syncEntryInputs();
+    if (!Entry.categoryId || !Entry.methodId){ Toast.show("用途と支払方法を選んでください", {kind:"err"}); return; }
+    const label = (Entry.detail || Sel.cat(Entry.categoryId).name).trim();
+    const dup = (Store.state.templates || []).some(t =>
+      t.categoryId === Entry.categoryId && t.methodId === Entry.methodId && (t.detail || "") === Entry.detail);
+    if (dup){ Toast.show("同じ組み合わせが登録済みです"); return; }
+    const amount = Entry.value() || null;
+    const id = uid("tpl");
+    Store.commit(s => {
+      if (!Array.isArray(s.templates)) s.templates = [];
+      s.templates.push({ id, label, amount, categoryId:Entry.categoryId, methodId:Entry.methodId, detail:Entry.detail });
+    }, D.UI);
+    View.entrySheet();
+    Toast.undo("「" + label + "」を登録しました", () => {
+      Store.commit(s => { s.templates = s.templates.filter(t => t.id !== id); }, D.UI);
+      View.entrySheet();
+    });
+  },
+  "entry:cat"({id}){ syncEntryInputs(); Entry.categoryId = id; View.entrySheet(); },
+  "entry:mth"({id}){ syncEntryInputs(); Entry.methodId = id; View.entrySheet(); },
   key({k}){ Entry.key(k); },
 
   "entry:save"(){
@@ -2742,6 +3054,29 @@ const Actions = {
   },
   "hist:mth"({id}){ HistoryUI.methodId   = id || ""; View.history(); },
   "hist:cat"({id}){ HistoryUI.categoryId = id || ""; View.history(); },
+  "hist:mode"({v}){ HistoryUI.mode = v; View.history(); },
+  "hist:clear"(){
+    Object.assign(HistoryUI, { q:"", methodId:"", categoryId:"", min:"", max:"" });
+    View.history();
+  },
+  /** カレンダーの日をタップ → その日だけに絞った一覧へ */
+  "cal:day"({d}){
+    HistoryUI.mode = "list";
+    HistoryUI.q = ""; HistoryUI.methodId = ""; HistoryUI.categoryId = "";
+    HistoryUI.min = ""; HistoryUI.max = "";
+    HistoryUI.focusDate = d;
+    View.history();
+    requestAnimationFrame(() => {
+      const el = document.querySelector('[data-day="' + d + '"]');
+      if (el) el.scrollIntoView({ block:"center", behavior:"smooth" });
+    });
+  },
+
+  "status:year"({d}){
+    const [y,m] = statusMonth().split("-").map(Number);
+    StatusUI.month = monthKeyOf(y + Number(d), m);
+    View.status();
+  },
 
   /* --- 祝日 --- */
   "hol:year"({v}){ HolidayUI.year = v; View.settings(); },
@@ -3611,10 +3946,112 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S13 テンプレート・カレンダー・年間 ---------------- */
+  function s13(){
+    g("S13 よく使う入力");
+    const s = seedState();
+    const c0 = s.categories[0].id, c1 = s.categories[1].id;
+    const m0 = s.methods[0].id;
+    const recent = d => fmt(new Date(Date.now() - d*86400000));
+    // 3回使った組み合わせ／2回／1回きり
+    [0,1,2].forEach(i => s.transactions.push({ id:"f"+i, date:recent(i+1), amount:1000+i*100,
+      type:"expense", incomeKind:null, categoryId:c0, methodId:m0, detail:"よく行く店" }));
+    [0,1].forEach(i => s.transactions.push({ id:"g"+i, date:recent(i+1), amount:500,
+      type:"expense", incomeKind:null, categoryId:c1, methodId:m0, detail:"たまに" }));
+    s.transactions.push({ id:"h", date:recent(1), amount:9000, type:"expense",
+      incomeKind:null, categoryId:c1, methodId:m0, detail:"一度きり" });
+    // 60日より古いものは候補にしない
+    s.transactions.push({ id:"old", date:recent(120), amount:300, type:"expense",
+      incomeKind:null, categoryId:c0, methodId:m0, detail:"むかしの店" });
+    withState(s, () => {
+      const t = Sel.templates();
+      const labels = t.map(x => x.label);
+      ok("よく使う組み合わせが候補に出る", labels.includes("よく行く店"));
+      ok("2回でも候補に出る",             labels.includes("たまに"));
+      ok("1回きりは候補にしない",        !labels.includes("一度きり"));
+      ok("60日より古いものは出さない",   !labels.includes("むかしの店"));
+      ok("多い順に並ぶ", labels.indexOf("よく行く店") < labels.indexOf("たまに"));
+      const top = t.find(x => x.label === "よく行く店");
+      eq("初期金額は平均", top.amount, Math.round((1000+1100+1200)/3));
+      eq("用途が引き継がれる", top.categoryId, c0);
+      ok("候補は4件まで", t.length <= 4);
+    });
+
+    // 手で登録したものが優先され、自動候補と重複しない
+    const s2_ = seedState();
+    const sc = s2_.categories[0].id, sm = s2_.methods[0].id;
+    s2_.templates = [{ id:"t1", label:"手動のやつ", amount:800, categoryId:sc, methodId:sm, detail:"手動のやつ" }];
+    [0,1,2].forEach(i => s2_.transactions.push({ id:"m"+i, date:recent(i+1), amount:800,
+      type:"expense", incomeKind:null, categoryId:sc, methodId:sm, detail:"手動のやつ" }));
+    withState(s2_, () => {
+      const t = Sel.templates();
+      eq("同じ組み合わせが二重に出ない", t.filter(x => x.detail === "手動のやつ").length, 1);
+      eq("手で登録したものが先頭", t[0].label, "手動のやつ");
+      eq("手動は auto ではない", t[0].auto, false);
+    });
+
+    g("S13b カレンダー");
+    const cal = seedState();
+    const cc = cal.categories[0].id, cm = cal.methods[0].id;
+    cal.transactions.push(
+      { id:"c1", date:"2026-05-01", amount:3000, type:"expense", incomeKind:null, categoryId:cc, methodId:cm, detail:"" },
+      { id:"c2", date:"2026-05-01", amount:2000, type:"expense", incomeKind:null, categoryId:cc, methodId:cm, detail:"" },
+      { id:"c3", date:"2026-05-15", amount:1000, type:"expense", incomeKind:null, categoryId:cc, methodId:cm, detail:"" },
+      { id:"c4", date:"2026-05-20", amount:250000,type:"income",  incomeKind:"earning", categoryId:cc, methodId:cm, detail:"" }
+    );
+    withState(cal, () => {
+      const r = Sel.calendar("2026-05");
+      eq("5月は31日", r.days, 31);
+      // 2026-05-01 は金曜なので、前に5マス空く
+      eq("月初の曜日ぶん空く", r.cells.filter(x => x === null).length, new Date(2026,4,1).getDay());
+      eq("マスの総数 = 空き + 日数", r.cells.length, new Date(2026,4,1).getDay() + 31);
+      const d1  = r.cells.find(x => x && x.d === 1);
+      const d15 = r.cells.find(x => x && x.d === 15);
+      const d20 = r.cells.find(x => x && x.d === 20);
+      eq("同じ日の支出は合算", d1.spend, 5000);
+      eq("件数も数える",       d1.n, 2);
+      eq("別の日は別に集計",   d15.spend, 1000);
+      eq("収入は支出に混ぜない", d20.spend, 0);
+      eq("収入は別で持つ",       d20.income, 250000);
+      eq("濃さの基準は最大額",   r.max, 5000);
+      ok("土日に印が付く", r.cells.filter(x => x && x.weekend).length > 0);
+    });
+
+    g("S13c 年間サマリー");
+    const an = seedState();
+    const ac = an.categories[0].id, ac2 = an.categories[1].id, am = an.methods[0].id;
+    [1,2,3].forEach(m => an.transactions.push({ id:"y"+m, date:"2026-"+pad2(m)+"-10",
+      amount:10000, type:"expense", incomeKind:null, categoryId:ac, methodId:am, detail:"" }));
+    an.transactions.push({ id:"y9", date:"2026-02-10", amount:5000, type:"expense",
+      incomeKind:null, categoryId:ac2, methodId:am, detail:"" });
+    // 前年の分
+    [1,2].forEach(m => an.transactions.push({ id:"p"+m, date:"2025-"+pad2(m)+"-10",
+      amount:8000, type:"expense", incomeKind:null, categoryId:ac, methodId:am, detail:"" }));
+    an.transactions.push({ id:"yi", date:"2026-01-25", amount:300000, type:"income",
+      incomeKind:"earning", categoryId:ac, methodId:am, detail:"" });
+    withState(an, () => {
+      const r = Sel.annual("2026");
+      eq("年間の支出", r.total, 35000);
+      eq("年間の収入", r.income, 300000);
+      eq("年間の収支", r.net, 300000 - 35000);
+      eq("記録のある月",  r.months, 3);
+      eq("月平均",        Math.round(r.avg), Math.round(35000/3));
+      eq("前年の支出",    r.prevTotal, 16000);
+      eq("用途は多い順",  r.rows[0].id, ac);
+      eq("用途別の年計",  r.rows[0].total, 30000);
+      eq("前年の用途別",  r.rows[0].prev, 16000);
+      eq("記録の無い用途は出さない",
+         r.rows.filter(x => x.total === 0 && x.prev === 0).length, 0);
+      const r2 = Sel.annual("2024");
+      eq("記録の無い年は0", r2.total, 0);
+      eq("記録の無い年は空", r2.rows.length, 0);
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -3726,6 +4163,16 @@ document.addEventListener("input", e => {
     HistoryUI._t = setTimeout(() => { View.history(); const i = $("#hist-q"); if (i){ i.focus();
       i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
   if (e.target.id === "entry-date" || e.target.id === "entry-detail") syncEntryInputs();
+  if (e.target.id === "hist-min" || e.target.id === "hist-max"){
+    HistoryUI[e.target.id === "hist-min" ? "min" : "max"] = e.target.value;
+    clearTimeout(HistoryUI._t2);
+    HistoryUI._t2 = setTimeout(() => {
+      const id = e.target.id, pos = e.target.selectionStart;
+      View.history();
+      const el = $("#" + id);
+      if (el){ el.focus(); try { el.setSelectionRange(pos, pos); } catch(err){} }
+    }, 350);
+  }
 });
 
 /* 予算欄は blur（change）で確定させる。入力中に再描画すると
