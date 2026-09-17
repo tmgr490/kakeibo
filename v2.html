@@ -28,16 +28,16 @@ try{
    =================================================================== */
 @layer tokens {
   :root{
-    --teal-deep:#1F5F55; --teal:#2E8B7A; --teal-soft:#E7F2EF;
-    --gold:#C79A3C;      --gold-soft:#F6EBD0;
-    --paper:#FAF9F5;     --surface:#FFFFFF;  --surface-2:#F3F2ED;
-    --ink:#26302C;       --ink-soft:#61706B; --ink-faint:#8B9A95;
-    --line:#E4E8E4;
-    --red:#B4453A;       --red-soft:#F7E7E4;
-    --blue:#3E6FBF;
-    --shadow-sm: 0 1px 2px rgba(20,50,45,.05), 0 1px 1px rgba(20,50,45,.04);
-    --shadow:    0 8px 24px rgba(20,50,45,.08), 0 1px 3px rgba(20,50,45,.05);
-    --shadow-lg: 0 16px 40px rgba(20,50,45,.14), 0 2px 6px rgba(20,50,45,.06);
+    /* 配色は「明細」方向: 濃紺＋ブルー。彩度を抑えて金額を主役にする */
+    --accent-deep:#0B2447; --accent:#1057C8; --accent-soft:#E6EEFB;
+    --warn:#B07615;      --warn-soft:#FAF0D9;
+    --paper:#F5F7FB;     --surface:#FFFFFF;  --surface-2:#EFF3F9;
+    --ink:#0F1B2D;       --ink-soft:#54657F; --ink-faint:#8896AB;
+    --line:#E1E8F0;
+    --red:#C8372D;       --red-soft:#FBE9E7;
+    --shadow-sm: 0 1px 2px rgba(11,36,71,.05);
+    --shadow:    0 6px 20px rgba(11,36,71,.08), 0 1px 2px rgba(11,36,71,.05);
+    --shadow-lg: 0 18px 44px rgba(11,36,71,.18);
     --ease-spring: cubic-bezier(.22,1,.36,1);
     --ease-out:    cubic-bezier(.16,1,.3,1);
     --tap:44px;
@@ -50,42 +50,40 @@ try{
        9個目は作らず「その他」にまとめる。 */
     --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
     --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
-    --grid:#E8ECE8;            /* 目盛りは面から1段だけずらす */
+    --grid:#E7EDF5;            /* 目盛りは面から1段だけずらす */
   }
-  /* ダークは単純反転にしない: 影は情報を持たないのでヘアラインに、
-     ゴールドは彩度を落とし、背景は純黒でなく緑みの暗色にして面を浮かせる */
+  /* ダークは単純反転にしない: 暗い面では影が情報を持たないのでヘアラインに置き換え、
+     背景は純黒でなく青みの暗色にして、その上のカードが浮いて見えるようにする */
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
-      --teal-deep:#0E2E29; --teal:#57B7A2; --teal-soft:#16302B;
-      --gold:#D8B267;      --gold-soft:#332A17;
-      --paper:#121512;     --surface:#1B211D; --surface-2:#232A25;
-      --ink:#E6EAE6;       --ink-soft:#9BAAA4; --ink-faint:#6E7D77;
-      --line:#2A322D;
-      --red:#E4796C;       --red-soft:#3A211E;
-      --blue:#7FA6E8;
+      --accent-deep:#071020; --accent:#5B96F5; --accent-soft:#152743;
+      --warn:#D9A94F;      --warn-soft:#2A2315;
+      --paper:#0A1220;     --surface:#121C2E; --surface-2:#1A2639;
+      --ink:#E8EEF7;       --ink-soft:#94A6BE; --ink-faint:#6A7B92;
+      --line:#21304A;
+      --red:#E4796C;       --red-soft:#331F1D;
       --shadow-sm: 0 0 0 1px rgba(255,255,255,.04);
       --shadow:    0 0 0 1px rgba(255,255,255,.05);
       --shadow-lg: 0 12px 32px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
       /* ダークは反転ではなく、暗い面用に選び直した同じ8色 */
       --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
       --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
-      --grid:#2A322D;
+      --grid:#21304A;
     }
   }
   :root[data-theme="dark"]{
-    --teal-deep:#0E2E29; --teal:#57B7A2; --teal-soft:#16302B;
-    --gold:#D8B267;      --gold-soft:#332A17;
-    --paper:#121512;     --surface:#1B211D; --surface-2:#232A25;
-    --ink:#E6EAE6;       --ink-soft:#9BAAA4; --ink-faint:#6E7D77;
-    --line:#2A322D;
-    --red:#E4796C;       --red-soft:#3A211E;
-    --blue:#7FA6E8;
+    --accent-deep:#071020; --accent:#5B96F5; --accent-soft:#152743;
+    --warn:#D9A94F;      --warn-soft:#2A2315;
+    --paper:#0A1220;     --surface:#121C2E; --surface-2:#1A2639;
+    --ink:#E8EEF7;       --ink-soft:#94A6BE; --ink-faint:#6A7B92;
+    --line:#21304A;
+    --red:#E4796C;       --red-soft:#331F1D;
     --shadow-sm: 0 0 0 1px rgba(255,255,255,.04);
     --shadow:    0 0 0 1px rgba(255,255,255,.05);
     --shadow-lg: 0 12px 32px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
     --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
     --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
-    --grid:#2A322D;
+    --grid:#21304A;
   }
 }
 
@@ -120,7 +118,7 @@ try{
 @layer layout {
   header.appbar{
     position:sticky; top:0; z-index:40;
-    background:linear-gradient(135deg,var(--teal-deep),var(--teal));
+    background:linear-gradient(135deg,var(--accent-deep),var(--accent));
     color:#fff; padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;
     box-shadow:var(--shadow-sm);
     display:flex; align-items:center; gap:10px;
@@ -154,13 +152,13 @@ try{
     padding:0; transition:color .18s var(--ease-out);
   }
   nav.tabbar button .ic{ font-size:19px; line-height:1; }
-  nav.tabbar button[aria-current="page"]{ color:var(--teal); }
+  nav.tabbar button[aria-current="page"]{ color:var(--accent); }
   nav.tabbar button:active .ic{ transform:scale(.88); }
   nav.tabbar .fab-slot{ position:relative; }
   nav.tabbar .fab{
     position:absolute; left:50%; top:50%; transform:translate(-50%,-58%);
     width:54px; height:54px; border-radius:50%; border:none; cursor:pointer;
-    background:linear-gradient(135deg,var(--teal),var(--teal-deep)); color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent-deep)); color:#fff;
     font-size:26px; font-weight:300; line-height:1;
     box-shadow:0 6px 18px rgba(46,139,122,.42);
     display:grid; place-items:center;
@@ -186,7 +184,7 @@ try{
     }
     nav.tabbar button .ic{ font-size:17px; }
     nav.tabbar button:hover{ background:var(--surface-2); }
-    nav.tabbar button[aria-current="page"]{ background:var(--teal-soft); color:var(--teal); }
+    nav.tabbar button[aria-current="page"]{ background:var(--accent-soft); color:var(--accent); }
     /* FABはサイドバー先頭の通常ボタンに変える */
     nav.tabbar .fab-slot{ order:-1; height:48px; margin-bottom:6px; }
     nav.tabbar .fab{
@@ -219,10 +217,10 @@ try{
    =================================================================== */
 @layer components {
   .panel{
-    background:var(--surface); border:1px solid var(--line); border-radius:18px;
+    background:var(--surface); border:1px solid transparent; border-radius:16px;
     padding:16px; margin-bottom:12px; box-shadow:var(--shadow);
   }
-  .panel > h2{ font-size:14px; color:var(--teal); font-weight:800; margin-bottom:4px; }
+  .panel > h2{ font-size:14px; color:var(--ink); font-weight:800; margin-bottom:4px; }
   .note{ font-size:11.5px; color:var(--ink-soft); line-height:1.6; margin:0 0 10px; }
 
   .grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -235,18 +233,18 @@ try{
     transition:border-color .18s var(--ease-out), box-shadow .18s var(--ease-out);
   }
   input:focus,select:focus,textarea:focus{
-    outline:none; border-color:var(--teal); box-shadow:0 0 0 3.5px color-mix(in srgb, var(--teal) 20%, transparent);
+    outline:none; border-color:var(--accent); box-shadow:0 0 0 3.5px color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
   .btn{
     appearance:none; border:none; border-radius:12px; padding:11px 17px; font-size:13.5px;
-    font-weight:800; cursor:pointer; background:var(--teal-deep); color:#fff; min-height:var(--tap);
+    font-weight:800; cursor:pointer; background:var(--accent-deep); color:#fff; min-height:var(--tap);
     transition:filter .18s var(--ease-out), transform .1s var(--ease-out);
   }
   .btn:active{ transform:scale(.97); filter:brightness(.95); }
-  .btn.primary{ background:var(--teal); }
-  .btn.gold{ background:var(--gold); color:#3a2e10; }
-  .btn.outline{ background:transparent; color:var(--teal); border:1px solid var(--teal); }
+  .btn.primary{ background:var(--accent); }
+  .btn.gold{ background:var(--warn); color:#3a2e10; }
+  .btn.outline{ background:transparent; color:var(--accent); border:1px solid var(--accent); }
   .btn.ghost{ background:var(--surface-2); color:var(--ink); }
   .btn.danger{ background:var(--red); }
   .btn.small{ padding:7px 12px; font-size:12px; border-radius:9px; min-height:36px; }
@@ -262,13 +260,13 @@ try{
     transition:background-color .16s var(--ease-out), border-color .16s var(--ease-out), transform .1s var(--ease-out);
   }
   .chip:active{ transform:scale(.94); }
-  .chip[aria-pressed="true"]{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .chip[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#fff; }
   .chip .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
-  .chip.add{ border-style:dashed; color:var(--teal); font-weight:800; }
+  .chip.add{ border-style:dashed; color:var(--accent); font-weight:800; }
 
   .tag{ display:inline-block; font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:20px;
-        background:var(--teal-soft); color:var(--teal); }
-  .tag.gold{ background:var(--gold-soft); color:var(--gold); }
+        background:var(--accent-soft); color:var(--accent); }
+  .tag.gold{ background:var(--warn-soft); color:var(--warn); }
   .tag.red{ background:var(--red-soft); color:var(--red); }
   .tag.gray{ background:var(--surface-2); color:var(--ink-soft); }
 
@@ -278,7 +276,7 @@ try{
     border-radius:9px; padding:9px 6px; font-size:12.5px; font-weight:800; cursor:pointer; min-height:40px;
     transition:background-color .18s var(--ease-out), color .18s var(--ease-out);
   }
-  .seg button[aria-pressed="true"]{ background:var(--surface); color:var(--teal); box-shadow:var(--shadow-sm); }
+  .seg button[aria-pressed="true"]{ background:var(--surface); color:var(--accent); box-shadow:var(--shadow-sm); }
 
   /* --- リスト行 --- */
   .rows{ display:flex; flex-direction:column; }
@@ -299,7 +297,7 @@ try{
   .row .l1{ font-size:13.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row .l2{ font-size:11px; color:var(--ink-soft); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row .amt{ font-size:14.5px; font-weight:800; flex:0 0 auto; }
-  .row .amt.in{ color:var(--teal); }
+  .row .amt.in{ color:var(--accent); }
 
   .empty{ text-align:center; padding:34px 16px; color:var(--ink-faint); font-size:12.5px; line-height:1.9; }
   .empty .big{ font-size:34px; display:block; margin-bottom:8px; }
@@ -307,17 +305,27 @@ try{
   .total-box{
     display:flex; justify-content:space-between; align-items:center;
     margin-top:12px; padding:13px 15px; border-radius:13px;
-    background:var(--teal-soft); color:var(--teal);
+    background:var(--accent-soft); color:var(--accent);
   }
   .total-box .lbl{ font-size:12px; font-weight:700; }
   .total-box .val{ font-size:19px; font-weight:800; }
 
-  /* --- サマリー3分割 --- */
-  .sum3{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-  .sum3 > div{ background:var(--surface-2); border-radius:13px; padding:11px 9px; text-align:center; }
-  .sum3 .k{ font-size:10.5px; color:var(--ink-soft); font-weight:700; }
-  .sum3 .v{ font-size:15px; font-weight:800; margin-top:3px; }
-  .sum3 .v.ex{ color:var(--red); } .sum3 .v.in{ color:var(--teal); }
+  /* --- 収支サマリー: 明細のように行で積み、収支をいちばん大きく出す --- */
+  .sum3{ display:flex; flex-direction:column; }
+  .sum3 > div{
+    display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+    padding:11px 2px; border-bottom:1px solid var(--line);
+  }
+  .sum3 > div:last-child{ border-bottom:0; padding-bottom:2px; }
+  .sum3 .k{ font-size:12px; color:var(--ink-soft); font-weight:700; }
+  .sum3 .v{ font-size:20px; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:-.015em; }
+  /* 収支だけは見出し数字なので、等幅をやめて自然な字送りにする */
+  .sum3 > div:last-child .v{ font-size:30px; font-variant-numeric:normal; letter-spacing:-.025em; }
+  .sum3 .v.ex{ color:var(--red); } .sum3 .v.in{ color:var(--accent); }
+
+  /* 金額は桁を縦に揃える */
+  .legend-row .vl, .legend-row .pc, .row .amt, .bud-bot, .bud-top input,
+  .total-box .val, .day-head span, .pace .v{ font-variant-numeric:tabular-nums; }
 
   /* --- シート --- */
   dialog.sheet{
@@ -344,7 +352,7 @@ try{
   }
   .amount-display .expr{ font-size:12px; color:var(--ink-soft); min-height:17px; }
   .amount-display .val{ font-size:30px; font-weight:800; letter-spacing:-.02em; line-height:1.2; }
-  .amount-display .val.in{ color:var(--teal); }
+  .amount-display .val.in{ color:var(--accent); }
   .keypad{ display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
   .keypad button{
     appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink);
@@ -352,8 +360,8 @@ try{
     min-height:52px; transition:background-color .12s var(--ease-out), transform .08s var(--ease-out);
   }
   .keypad button:active{ transform:scale(.94); background:var(--surface-2); }
-  .keypad button.op{ background:var(--surface-2); font-size:19px; color:var(--teal); }
-  .keypad button.save{ background:var(--teal); color:#fff; border-color:var(--teal); font-size:15px; font-weight:800; grid-row:span 2; }
+  .keypad button.op{ background:var(--surface-2); font-size:19px; color:var(--accent); }
+  .keypad button.save{ background:var(--accent); color:#fff; border-color:var(--accent); font-size:15px; font-weight:800; grid-row:span 2; }
   .keypad button.wide{ grid-column:span 2; }
 
   /* --- トースト --- */
@@ -371,7 +379,7 @@ try{
   }
   .toast .msg{ flex:1; }
   .toast button{
-    appearance:none; border:none; background:transparent; color:var(--teal);
+    appearance:none; border:none; background:transparent; color:var(--accent);
     font-size:13px; font-weight:800; cursor:pointer; padding:4px 2px; white-space:nowrap;
   }
   .toast.err{ background:var(--red); color:#fff; }
@@ -382,10 +390,10 @@ try{
   .month-switch{ display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:12px; }
   .month-switch button{
     appearance:none; border:1px solid var(--line); background:var(--surface); border-radius:50%;
-    width:36px; height:36px; font-size:15px; cursor:pointer; color:var(--teal); font-weight:800;
+    width:36px; height:36px; font-size:15px; cursor:pointer; color:var(--accent); font-weight:800;
   }
   .month-switch button:active{ transform:scale(.9); }
-  .month-switch .label{ font-size:16px; font-weight:800; color:var(--teal); min-width:120px; text-align:center; }
+  .month-switch .label{ font-size:16px; font-weight:800; color:var(--accent); min-width:120px; text-align:center; }
 
   /* --- グラフ --- */
   .chart{ width:100%; display:block; overflow:visible; }
@@ -422,9 +430,9 @@ try{
   .keys i{ width:10px; height:10px; border-radius:3px; display:inline-block; }
 
   /* 予算メーター: 未消化部分は同系の薄い段。状態は塗りが持つ */
-  .gauge-track{ height:8px; border-radius:5px; background:var(--teal-soft); overflow:hidden; }
-  .gauge-fill{ height:100%; border-radius:5px 0 0 5px; background:var(--teal); transition:width .32s var(--ease-spring); }
-  .gauge-fill.warn{ background:var(--gold); }
+  .gauge-track{ height:8px; border-radius:5px; background:var(--accent-soft); overflow:hidden; }
+  .gauge-fill{ height:100%; border-radius:5px 0 0 5px; background:var(--accent); transition:width .32s var(--ease-spring); }
+  .gauge-fill.warn{ background:var(--warn); }
   .gauge-fill.over{ background:var(--red); }
   .bud-row{ padding:12px 0; border-bottom:1px solid var(--line); }
   .bud-row:last-child{ border-bottom:none; }
@@ -433,8 +441,8 @@ try{
   .bud-top .nm{ flex:1; min-width:0; font-size:13px; font-weight:700; }
   .bud-top input{ width:96px; padding:6px 8px; font-size:12.5px; text-align:right; border-radius:8px; }
   .bud-bot{ display:flex; justify-content:space-between; font-size:11.5px; margin-top:5px; font-variant-numeric:tabular-nums; }
-  .bud-bot .rem.ok{ color:var(--teal); font-weight:700; }
-  .bud-bot .rem.warn{ color:var(--gold); font-weight:700; }
+  .bud-bot .rem.ok{ color:var(--accent); font-weight:700; }
+  .bud-bot .rem.warn{ color:var(--warn); font-weight:700; }
   .bud-bot .rem.over{ color:var(--red); font-weight:700; }
   .bud-bot .rem.none{ color:var(--ink-faint); }
 
@@ -468,9 +476,9 @@ try{
   #selftest{ position:fixed; inset:0; z-index:200; background:var(--paper); color:var(--ink); overflow:auto; padding:16px; font-size:12px; }
   #selftest h1{ font-size:17px; margin-bottom:10px; }
   #selftest .sum{ padding:11px 14px; border-radius:12px; font-weight:800; margin-bottom:12px; }
-  #selftest .sum.ok{ background:var(--teal-soft); color:var(--teal); }
+  #selftest .sum.ok{ background:var(--accent-soft); color:var(--accent); }
   #selftest .sum.ng{ background:var(--red-soft); color:var(--red); }
-  #selftest .g{ font-weight:800; margin:14px 0 5px; color:var(--teal); font-size:12.5px; }
+  #selftest .g{ font-weight:800; margin:14px 0 5px; color:var(--accent); font-size:12.5px; }
   #selftest .c{ padding:5px 8px; border-bottom:1px solid var(--line); display:flex; gap:9px; align-items:flex-start; }
   #selftest .c.f{ background:var(--red-soft); }
   #selftest .c .st{ flex:0 0 auto; font-weight:800; }
@@ -1487,7 +1495,7 @@ View.status = function(){
       <div class="sum3">
         <div><div class="k">支出</div><div class="v ex">${yen(expense)}</div></div>
         <div><div class="k">収入</div><div class="v in">${yen(income)}</div></div>
-        <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--teal)":"var(--red)"}">${yen(net)}</div></div>
+        <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
       </div>
       <div class="seg" role="group" aria-label="表示切替" style="margin-top:12px">
         <button data-act="status:tab" data-v="breakdown" aria-pressed="${String(StatusUI.tab==="breakdown")}">内訳</button>
@@ -1540,7 +1548,7 @@ View._breakdown = function(mk){
             <p class="note">予算 ${yen(p.budget)} に対して ${Math.round(p.expense/p.budget*100)}% を使っています。</p>
             <div class="pace">
               <div><div class="k">あと使えるお金</div>
-                   <div class="v" style="color:${p.remain>=0?"var(--teal)":"var(--red)"}">${yen(p.remain)}</div></div>
+                   <div class="v" style="color:${p.remain>=0?"var(--accent)":"var(--red)"}">${yen(p.remain)}</div></div>
               <div><div class="k">1日あたりの目安</div>
                    <div class="v">${p.perDayLeft==null ? "—" : yen(p.perDayLeft)}</div></div>
             </div>
@@ -1625,7 +1633,7 @@ View._trend = function(mk){
           ? html`<div class="pace">
               <div><div class="k">今月の支出</div><div class="v">${yen(cur.expense)}</div></div>
               <div><div class="k">先月との差</div>
-                   <div class="v" style="color:${diff>0?"var(--red)":"var(--teal)"}">${diff>0?"+":""}${yen(diff)}</div></div>
+                   <div class="v" style="color:${diff>0?"var(--red)":"var(--accent)"}">${diff>0?"+":""}${yen(diff)}</div></div>
               <div><div class="k">12ヶ月平均</div><div class="v">${yen(avg)}</div></div>
             </div>`
           : html`<p class="note mb0">比較できる月がまだありません。</p>`}
