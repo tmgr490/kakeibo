@@ -478,6 +478,18 @@ try{
   .pay-item .a{ font-weight:700; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .pay-item .a.in{ color:var(--accent); }
 
+  /* --- 口座ごとの引落まとめ --- */
+  .acc-block{ padding:10px 0; border-bottom:1px solid var(--line); }
+  .acc-block:last-child{ border-bottom:none; }
+  .acc-head{ display:flex; align-items:baseline; gap:9px; margin-bottom:6px; flex-wrap:wrap; }
+  .acc-head .nm{ font-size:13.5px; font-weight:800; }
+  .acc-head .sub{ font-size:11px; color:var(--ink-faint); }
+  .acc-line{ display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:12.5px; }
+  .acc-line.muted{ color:var(--ink-faint); font-size:11.5px; }
+  .acc-line .dt{ flex:0 0 auto; font-weight:700; display:flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums; }
+  .acc-line .mt{ flex:1; min-width:0; color:var(--ink-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .acc-line .am{ flex:0 0 auto; font-weight:800; font-variant-numeric:tabular-nums; }
+
   /* --- 設定のサブタブ --- */
   .subtabs{ display:flex; gap:6px; overflow-x:auto; padding:2px 1px 10px; scrollbar-width:none; }
   .subtabs::-webkit-scrollbar{ display:none; }
@@ -487,6 +499,12 @@ try{
     cursor:pointer; min-height:38px; white-space:nowrap;
   }
   .subtabs button[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  /* --- チェックボックス --- */
+  .chk{ display:flex; gap:10px; align-items:flex-start; margin:12px 0 4px; cursor:pointer; }
+  .chk input{ width:20px; height:20px; margin:1px 0 0; flex:0 0 auto; accent-color:var(--accent); }
+  .chk span{ font-size:13px; font-weight:700; line-height:1.5; }
+  .chk em{ display:block; font-style:normal; font-size:11.5px; font-weight:400; color:var(--ink-soft); margin-top:3px; }
 
   /* --- 設定の一覧行 --- */
   .item{
@@ -837,6 +855,25 @@ function v1_to_v2(v1){
 }
 
 const MIGRATIONS = { 1: v1_to_v2 };
+
+/** このアプリのデータに見えるか。
+ *  これが無いと、無関係なJSONが移行処理を素通りして「空だが形式上は正しい状態」
+ *  になり、既存の家計簿を丸ごと置き換えてしまう（実際に起きた）。
+ *  中身が空でも構わないが、形が違うものは受け付けない。 */
+function looksLikeKakeibo(raw){
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const v = Number(raw.schemaVersion) || 0;
+  if (v >= 2){
+    // v2以降: 取引配列と、用途か支払方法のどちらかがあること
+    return Array.isArray(raw.transactions)
+        && (Array.isArray(raw.categories) || Array.isArray(raw.methods));
+  }
+  // v1: 取引配列に加えて、v1特有の入れ物があること
+  return Array.isArray(raw.transactions)
+      && (Array.isArray(raw.cards)
+          || Array.isArray(raw.subscriptions)
+          || (raw.pulldowns && typeof raw.pulldowns === "object"));
+}
 
 function migrate(rawState){
   let s = rawState, v = Number(s && s.schemaVersion) || 1, guard = 0;
@@ -1290,6 +1327,36 @@ Sel.cardSchedule = memo(function(methodId){
            groups, upcoming: groups.filter(g => !g.past) };
 });
 
+/** 口座ごとの引落予定。残高は扱わない（口座残高は銀行アプリで直接見るものなので、
+ *  ここで二重に管理させない）。締め日エンジンが既に持っている支払日と金額を
+ *  引落先ごとに束ねるだけなので、ユーザーの入力・更新は要らない。 */
+Sel.accountSchedule = memo(function(){
+  const out = new Map();
+  for (const m of Sel.activeMethods()){
+    if (!m.billing) continue;
+    const sc = Sel.cardSchedule(m.id);
+    if (!sc) continue;
+    const key = m.billing.accountId || "__none";
+    if (!out.has(key)) out.set(key, {
+      accountId: m.billing.accountId || null,
+      name: m.billing.accountId && Sel.acc(m.billing.accountId) ? Sel.acc(m.billing.accountId).name : "口座の指定なし",
+      byDate: new Map(), methods: [],
+    });
+    const a = out.get(key);
+    a.methods.push(m.name);
+    for (const g of sc.upcoming){
+      if (!a.byDate.has(g.payDate)) a.byDate.set(g.payDate, { payDate:g.payDate, total:0, parts:[] });
+      const d = a.byDate.get(g.payDate);
+      d.total += g.total;
+      d.parts.push({ method:m.name, total:g.total, adjusted:g.adjusted });
+    }
+  }
+  return Array.from(out.values()).map(a => ({
+    accountId:a.accountId, name:a.name, methods:a.methods,
+    dates: Array.from(a.byDate.values()).sort((x,y) => x.payDate < y.payDate ? -1 : 1),
+  })).sort((x,y) => x.name < y.name ? -1 : 1);
+});
+
 /** 締め日・支払日の設定を日本語1行で説明する */
 Sel.billingText = function(b){
   if (!b) return "";
@@ -1424,6 +1491,8 @@ const Toast = {
       el.appendChild(b);
     }
     host.appendChild(el);
+    // 積み上がると古いものが操作の邪魔になるので、画面に出すのは3つまで
+    while (host.children.length > 3) host.firstElementChild.remove();
     const ms = opt.ms === 0 ? 0 : (opt.ms || 4200);
     if (ms) setTimeout(() => el.remove(), ms);
     return el;
@@ -2090,8 +2159,33 @@ View.schedule = function(){
     return;
   }
 
+  const accs = Sel.accountSchedule();
+  const showAccounts = accs.length > 1 || (accs.length === 1 && accs[0].accountId);
+
   mount(host, html`
     <p class="note" style="padding:0 2px">締め日・支払日・休日調整をもとに、次回以降の引き落とし日と金額を計算しています。サブスクの発生予定分も含みます。</p>
+
+    ${showAccounts ? html`
+      <div class="panel">
+        <h2>引落口座ごとのまとめ</h2>
+        <p class="note">どの口座から、いつ、いくら引き落とされるかです。残高は扱っていないので、口座の残高は銀行アプリでご確認ください。</p>
+        ${accs.map(a => html`
+          <div class="acc-block">
+            <div class="acc-head">
+              <span class="nm">${a.name}</span>
+              <span class="sub">${a.methods.join("・")}</span>
+            </div>
+            ${a.dates.length === 0
+              ? html`<div class="acc-line muted">今後の引き落とし予定はありません</div>`
+              : a.dates.slice(0,4).map((d,i) => html`
+                  <div class="acc-line">
+                    <span class="dt">${jpDate(d.payDate)}${i === 0 ? html`<span class="tag">次回</span>` : ""}</span>
+                    <span class="mt">${d.parts.map(p => p.method).join("・")}</span>
+                    <span class="am">${yen(d.total)}</span>
+                  </div>`)}
+          </div>`)}
+      </div>` : ""}
+
     <div class="cols">
       ${cards.map(m => {
         const sc = Sel.cardSchedule(m.id);
@@ -2134,15 +2228,18 @@ const SettingsUI = { tab:"methods" };
 
 View.settings = function(){
   const host = $('[data-route="settings"]');
-  const tabs = [["methods","支払方法"],["subs","サブスク"],["cats","用途"],["other","その他"]];
+  const tabs = [["methods","支払方法"],["subs","サブスク"],["cats","用途"],
+                ["holidays","祝日"],["analysis","節約診断"],["other","その他"]];
   mount(host, html`
     <div class="subtabs">
       ${tabs.map(([k,label]) => html`<button data-act="set:tab" data-v="${k}" aria-pressed="${String(SettingsUI.tab===k)}">${label}</button>`)}
     </div>
-    ${SettingsUI.tab === "methods" ? View._methods()
-    : SettingsUI.tab === "subs"    ? View._subs()
-    : SettingsUI.tab === "cats"    ? View._cats()
-    :                                View._other()}`);
+    ${SettingsUI.tab === "methods"  ? View._methods()
+    : SettingsUI.tab === "subs"     ? View._subs()
+    : SettingsUI.tab === "cats"     ? View._cats()
+    : SettingsUI.tab === "holidays" ? View._holidays()
+    : SettingsUI.tab === "analysis" ? View._analysis()
+    :                                 View._other()}`);
 };
 
 /* 支払方法（カードは「締め日を持つ支払方法」として統合してある。
@@ -2260,6 +2357,86 @@ View._cats = function(){
     </div>`;
 };
 
+/* 祝日。カードの引き落としが土日祝にあたったときの調整に使う。
+   会社の休業日を手で足せるようにしてあり、オンライン取得しても消えない
+   （source で区別している）。 */
+const HolidayUI = { year:null };
+
+View._holidays = function(){
+  const H = Store.state.holidays;
+  const keys = Object.keys(H).sort();
+  const years = Array.from(new Set(keys.map(k => k.slice(0,4)))).sort().reverse();
+  if (!HolidayUI.year) HolidayUI.year = String(new Date().getFullYear());
+  const shown = keys.filter(k => k.startsWith(HolidayUI.year));
+  const manual = keys.filter(k => H[k] && H[k].source === "manual").length;
+
+  return html`
+    <div class="panel">
+      <h2>祝日・休業日</h2>
+      <p class="note">カードの引き落としが土日祝にあたったときの調整に使います。日本の祝日はまとめて取得でき、会社の休業日などは手で足せます。手で足した分は、取得し直しても消えません。</p>
+      <div class="btn-row" style="margin-top:0">
+        <button class="btn" data-act="hol:fetch">🌐 日本の祝日を取得</button>
+        <button class="btn ghost small" data-act="hol:add">＋ 休業日を足す</button>
+      </div>
+      <p class="note" style="margin-top:10px">登録 ${keys.length}件${manual ? "（うち手動 " + manual + "件）" : ""}</p>
+
+      ${years.length ? html`
+        <div class="chip-row">
+          ${years.map(y => html`<button class="chip" data-act="hol:year" data-v="${y}" aria-pressed="${String(HolidayUI.year===y)}">${y}年</button>`)}
+        </div>` : ""}
+
+      ${shown.length === 0
+        ? html`<div class="empty" style="padding:22px"><span class="big">📅</span>${keys.length ? HolidayUI.year + "年の登録はありません。" : "まだ登録がありません。"}</div>`
+        : shown.map(k => html`
+            <div class="item">
+              <div class="body">
+                <div class="t1">${jpDate(k)} ${H[k].source === "manual" ? html`<span class="tag gold">手動</span>` : ""}</div>
+                <div class="t2">${H[k].name}</div>
+              </div>
+              <div class="acts">
+                <button class="icon-sm danger" data-act="hol:del" data-d="${k}" aria-label="${H[k].name}を削除">🗑</button>
+              </div>
+            </div>`)}
+    </div>`;
+};
+
+/* 節約診断。全取引をそのまま連結すると数年分では膨大だし、
+   メモはこのアプリで最も個人的な情報なので、要約を既定にして
+   明細は明示的に選んだときだけ含める。 */
+const AnalysisUI = { months:3, includeRows:false, text:"" };
+
+View._analysis = function(){
+  return html`
+    <div class="panel">
+      <h2>節約診断用のテキストを作る</h2>
+      <p class="note">支出の傾向をまとめたテキストを作ります。AIチャットに貼り付けて「何を使いすぎているか」を相談できます。<strong>貼り付けた先にはこの内容が渡ります。</strong>信頼できる相手にだけ使ってください。</p>
+
+      <div class="note" style="margin-bottom:4px">対象の期間</div>
+      <div class="chip-row">
+        ${[[3,"直近3ヶ月"],[6,"直近6ヶ月"],[12,"直近12ヶ月"]].map(([n,label]) =>
+          html`<button class="chip" data-act="ana:months" data-v="${n}" aria-pressed="${String(AnalysisUI.months===n)}">${label}</button>`)}
+      </div>
+
+      <label class="chk">
+        <input type="checkbox" id="ana-rows" ${AnalysisUI.includeRows ? "checked" : ""}>
+        <span>1件ずつの明細も含める<em>メモや店名がそのまま入ります。金額の合計だけで相談するなら不要です。</em></span>
+      </label>
+
+      <div class="btn-row">
+        <button class="btn" data-act="ana:build">テキストを作る</button>
+        ${AnalysisUI.text ? html`
+          <button class="btn ghost small" data-act="ana:copy">📄 コピー</button>
+          <button class="btn ghost small" data-act="ana:download">⬇ 保存</button>` : ""}
+      </div>
+
+      ${AnalysisUI.text ? html`
+        <label class="field" style="margin-top:12px">プレビュー（${AnalysisUI.text.length.toLocaleString("ja-JP")}文字）
+          <textarea id="ana-preview" rows="12" readonly
+            style="font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6">${AnalysisUI.text}</textarea>
+        </label>` : ""}
+    </div>`;
+};
+
 View._other = function(){
   const s = Store.state;
   const size = (() => { try { return new Blob([JSON.stringify(s)]).size; } catch(e){ return 0; } })();
@@ -2277,14 +2454,23 @@ View._other = function(){
 
     <div class="panel">
       <h2>バックアップ</h2>
-      <p class="note">すべてのデータをJSONファイルに書き出し／読み込みできます。データはこの端末のブラウザ内にのみ保存されています。</p>
+      <p class="note">家計データはこの端末のブラウザ内にしかありません。機種変更やブラウザのデータ消去で失われるので、ときどき書き出しておいてください。読み込みは、失敗しても元に戻せるようになっています。</p>
       <div class="btn-row">
-        <button class="btn" data-act="io:export">⬇ 書き出す</button>
+        <button class="btn" data-act="io:export">⬇ バックアップを書き出す</button>
         <label class="btn ghost small" style="cursor:pointer;display:inline-flex;align-items:center">
           ⬆ 読み込む
-          <input type="file" id="io-import" accept="application/json" hidden>
+          <input type="file" id="io-import" accept="application/json,.json" hidden>
         </label>
       </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn ghost small" data-act="io:csv">⬇ CSVで書き出す（Excel用）</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>データを消す</h2>
+      <p class="note">このアプリの記録をすべて消して、最初の状態に戻します。取り消せません。</p>
+      <div class="btn-row"><button class="btn danger small" data-act="io:reset">⚠ 初期状態にリセット</button></div>
     </div>
 
     <div class="panel">
@@ -2557,7 +2743,103 @@ const Actions = {
   "hist:mth"({id}){ HistoryUI.methodId   = id || ""; View.history(); },
   "hist:cat"({id}){ HistoryUI.categoryId = id || ""; View.history(); },
 
+  /* --- 祝日 --- */
+  "hol:year"({v}){ HolidayUI.year = v; View.settings(); },
+  "hol:del"({d}){
+    const H = Store.state.holidays, prev = H[d];
+    if (!prev) return;
+    Store.commit(s => { delete s.holidays[d]; }, D.HOLIDAY);
+    View.settings();
+    Toast.undo(prev.name + " を削除しました", () => {
+      Store.commit(s => { s.holidays[d] = prev; }, D.HOLIDAY); View.settings();
+    });
+  },
+  "hol:add"(){
+    const d = prompt("休業日の日付（YYYY-MM-DD）", todayStr());
+    if (!d) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())){ Toast.show("日付の形式が違います（例: 2026-12-30）", {kind:"err"}); return; }
+    const name = prompt("名前（例: 会社休業日）", "休業日");
+    if (!name) return;
+    Store.commit(s => { s.holidays[d.trim()] = { name:name.trim(), source:"manual" }; }, D.HOLIDAY);
+    HolidayUI.year = d.trim().slice(0,4);
+    View.settings();
+  },
+  async "hol:fetch"(){
+    Toast.show("取得しています…", { ms:1500 });
+    try{
+      const res = await fetch("https://holidays-jp.github.io/api/v1/date.json");
+      if (!res.ok) throw new Error("network");
+      const data = await res.json();
+      let added = 0, kept = 0;
+      Store.commit(s => {
+        Object.entries(data).forEach(([date,name]) => {
+          // 手で足した休業日は上書きしない
+          if (s.holidays[date] && s.holidays[date].source === "manual"){ kept++; return; }
+          if (!s.holidays[date]) added++;
+          s.holidays[date] = { name:String(name), source:"api" };
+        });
+        s.prefs.lastHolidaySync = todayStr();
+      }, D.HOLIDAY);
+      View.settings();
+      Toast.show(`祝日を反映しました（新規 ${added}件${kept ? " / 手動の ${kept}件は保持" : ""}）`.replace("${kept}", kept));
+    }catch(e){
+      Toast.show("取得できませんでした。通信環境をご確認ください（手動でも足せます）", {kind:"err", ms:6000});
+    }
+  },
+
+  /* --- 節約診断 --- */
+  "ana:months"({v}){ AnalysisUI.months = Number(v); AnalysisUI.text = ""; View.settings(); },
+  "ana:build"(){
+    const el = $("#ana-rows");
+    AnalysisUI.includeRows = !!(el && el.checked);
+    AnalysisUI.text = buildAnalysisText(AnalysisUI.months, AnalysisUI.includeRows);
+    View.settings();
+  },
+  async "ana:copy"(){
+    try{
+      await navigator.clipboard.writeText(AnalysisUI.text);
+      Toast.show("コピーしました");
+    }catch(e){
+      const t = $("#ana-preview");
+      if (t){ t.focus(); t.select(); Toast.show("プレビューを選択しました。長押ししてコピーしてください", {ms:6000}); }
+    }
+  },
+  "ana:download"(){
+    download(AnalysisUI.text, "節約診断_" + todayStr() + ".txt", "text/plain;charset=utf-8");
+    Toast.show("保存しました");
+  },
+
   /* --- 入出力 --- */
+  "io:csv"(){
+    const rows = Store.state.transactions.slice().sort((a,b) => a.date < b.date ? -1 : 1);
+    const head = ["日付","種別","金額","用途","支払方法","メモ"];
+    const esc = v => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+    };
+    const body = rows.map(t => [
+      t.date,
+      t.type === "income" ? (t.incomeKind === "earning" ? "収入" : "立替精算") : "支出",
+      t.amount, Sel.cat(t.categoryId).name, Sel.mth(t.methodId).name, t.detail || "",
+    ].map(esc).join(","));
+    // BOM を付けないと Excel が UTF-8 と判定せず文字化けする
+    download("﻿" + [head.join(","), ...body].join("\r\n"),
+             "家計簿_" + todayStr() + ".csv", "text/csv;charset=utf-8");
+    Toast.show(rows.length + "件を書き出しました");
+  },
+
+  "io:reset"(){
+    if (!confirm("このアプリの記録をすべて消して初期状態に戻します。取り消せません。よろしいですか？")) return;
+    try{
+      // v1 のキーも消す。片方だけ消すと、リセットしたのに次の起動で
+      // 旧データから復活してしまう
+      localStorage.setItem(KEY_UNDO, JSON.stringify(Store.state));
+      localStorage.removeItem(KEY_STATE);
+      localStorage.removeItem(KEY_V1);
+      location.reload();
+    }catch(e){ Toast.show("失敗しました", {kind:"err"}); }
+  },
+
   "io:export"(){
     const n = new Date();
     download(JSON.stringify(Store.state, null, 2),
@@ -2611,6 +2893,69 @@ function syncEntryInputs(){
   const d = $("#entry-date"), t = $("#entry-detail");
   if (d) Entry.date = d.value || todayStr();
   if (t) Entry.detail = t.value || "";
+}
+
+/** 節約診断のテキスト。既定は要約だけ。明細は明示的に選んだときだけ。 */
+function buildAnalysisText(months, includeRows){
+  const L = [];
+  const now = new Date();
+  const mk0 = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+  const data = Sel.trend(mk0, months);
+
+  L.push("【家計簿データ／節約診断用】");
+  L.push("これは家計簿アプリから書き出した集計です。使いすぎている用途と、減らせそうなところを具体的に指摘してください。");
+  L.push("金額はすべて日本円です。");
+  L.push("");
+  L.push(`対象期間: ${data[0].y}年${data[0].m}月 〜 ${data[data.length-1].y}年${data[data.length-1].m}月（${months}ヶ月）`);
+  L.push("");
+
+  L.push("■ 月ごとの収支");
+  data.forEach(d => L.push(`${d.y}/${pad2(d.m)}  支出 ${Math.round(d.expense).toLocaleString("ja-JP")} / 収入 ${Math.round(d.income).toLocaleString("ja-JP")} / 収支 ${Math.round(d.net).toLocaleString("ja-JP")}`));
+  const sumEx = data.reduce((a,d)=>a+d.expense,0);
+  L.push(`合計 支出 ${Math.round(sumEx).toLocaleString("ja-JP")} / 月平均 ${Math.round(sumEx/months).toLocaleString("ja-JP")}`);
+  L.push("");
+
+  L.push("■ 用途別（期間合計と月平均）");
+  const per = {};
+  data.forEach(d => {
+    const t = Sel.monthTotals(d.monthKey).totals;
+    Object.entries(t).forEach(([id,v]) => { per[id] = (per[id]||0) + v; });
+  });
+  Object.entries(per).filter(([,v]) => v !== 0).sort((a,b) => b[1]-a[1])
+    .forEach(([id,v]) => L.push(`${Sel.cat(id).name}  ${Math.round(v).toLocaleString("ja-JP")}（月平均 ${Math.round(v/months).toLocaleString("ja-JP")}）`));
+  L.push("");
+
+  const last = data[data.length-1];
+  const cats = Sel.activeCategories().filter(c => Sel.budgetOf(last.monthKey, c.id) > 0);
+  if (cats.length){
+    L.push(`■ 直近月（${last.y}/${pad2(last.m)}）の予算と実績`);
+    const t = Sel.monthTotals(last.monthKey).totals;
+    cats.forEach(c => {
+      const b = Sel.budgetOf(last.monthKey, c.id), a = Math.round(t[c.id] || 0);
+      L.push(`${c.name}  予算 ${b.toLocaleString("ja-JP")} / 実績 ${a.toLocaleString("ja-JP")} / ${a > b ? "超過 " + (a-b).toLocaleString("ja-JP") : "残り " + (b-a).toLocaleString("ja-JP")}`);
+    });
+    L.push("");
+  }
+
+  const subs = Store.state.subscriptions.filter(x => x.status === "有効" || x.status === "解約予定");
+  if (subs.length){
+    L.push("■ サブスク・固定費");
+    subs.forEach(x => L.push(`${x.name}  ${x.amount.toLocaleString("ja-JP")}（${x.interval} / 月あたり ${Math.round(Sel.monthlyEquivalent(x)).toLocaleString("ja-JP")}）${x.status === "解約予定" ? " ※解約予定" : ""}`));
+    L.push(`月あたり合計 ${Math.round(subs.reduce((a,x)=>a+Sel.monthlyEquivalent(x),0)).toLocaleString("ja-JP")}`);
+    L.push("");
+  }
+
+  if (includeRows){
+    const [from] = monthRange(data[0].monthKey);
+    const [,to]  = monthRange(last.monthKey);
+    const rows = Store.state.transactions
+      .filter(t => t.date >= from && t.date <= to)
+      .sort((a,b) => a.date < b.date ? -1 : 1);
+    L.push(`■ 明細（${rows.length}件）`);
+    rows.forEach(t => L.push(`${t.date}  ${Sel.cat(t.categoryId).name}  ${t.type === "income" ? "-" : ""}${t.amount.toLocaleString("ja-JP")}  ${Sel.mth(t.methodId).name}  ${t.detail || ""}`.trimEnd()));
+    L.push("");
+  }
+  return L.join("\n");
 }
 
 function download(text, filename, mime){
@@ -2939,6 +3284,22 @@ const Test = (function(){
     // v1 形式のバックアップJSONがそのまま読めること
     const fromV1 = validate(migrate(JSON.parse(JSON.stringify(V1_FIXTURE))));
     eq("v1形式のバックアップが読める", fromV1.state.transactions.length, V1_FIXTURE.transactions.length);
+
+    /* ★ 無関係なJSONを弾けること。
+       これが無いと、移行処理が素通りして「空だが形式上は正しい状態」になり、
+       既存の家計簿を丸ごと置き換えてしまう（実際に記録が全部消える事故が起きた）。 */
+    g("S8b このアプリのデータか見分ける");
+    ok("無関係なオブジェクトを弾く",   !looksLikeKakeibo({ "これは":"家計簿ではない" }));
+    ok("空のオブジェクトを弾く",       !looksLikeKakeibo({}));
+    ok("配列を弾く",                   !looksLikeKakeibo([1,2,3]));
+    ok("null を弾く",                  !looksLikeKakeibo(null));
+    ok("文字列を弾く",                 !looksLikeKakeibo("家計簿"));
+    ok("取引配列だけでは弾く",         !looksLikeKakeibo({ transactions:[] }));
+    ok("別アプリのJSONを弾く",         !looksLikeKakeibo({ version:3, items:[], settings:{} }));
+    ok("v1形式は受け入れる",            looksLikeKakeibo(V1_FIXTURE));
+    ok("v2形式は受け入れる",            looksLikeKakeibo(seedState()));
+    ok("記録が空のv2でも受け入れる",    looksLikeKakeibo({ schemaVersion:2, transactions:[], categories:[], methods:[] }));
+    ok("移行後のv2も受け入れる",        looksLikeKakeibo(migrate(JSON.parse(JSON.stringify(V1_FIXTURE)))));
   }
 
   /* ---------------- S9 テンプレート（エスケープと入れ子） ---------------- */
@@ -3155,10 +3516,105 @@ const Test = (function(){
        "5日締め ／ 当月25日払い");
   }
 
+  /* ---------------- S12 口座まとめ・書き出し ---------------- */
+  function s12(){
+    g("S12 口座ごとの引落まとめ");
+    const s = seedState();
+    const a1 = { id:"acc1", name:"口座A", balance:null, balanceAsOf:null, order:0, archived:false };
+    const a2 = { id:"acc2", name:"口座B", balance:null, balanceAsOf:null, order:1, archived:false };
+    s.accounts.push(a1, a2);
+    const cat = s.categories[0].id;
+    const mk = (name, accId) => {
+      const m = { id:uid("mth"), name, kind:"card", order:s.methods.length, archived:false,
+        billing:{ accountId:accId, closeType:"毎月指定日", closeDay:15, payOffset:1,
+                  payDayType:"date", payDay:10, holidayAdjust:"調整なし" } };
+      s.methods.push(m); return m;
+    };
+    // 同じ口座から引き落とされる2枚は、同じ日にまとまるはず
+    const c1 = mk("カード1", "acc1"), c2 = mk("カード2", "acc1"), c3 = mk("カード3", "acc2");
+    const now = new Date();
+    const cur = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+    [[c1,1000],[c2,2000],[c3,500]].forEach(([m,amt],i) => {
+      s.transactions.push({ id:"a"+i, date:cur+"-10", amount:amt, type:"expense",
+        incomeKind:null, categoryId:cat, methodId:m.id, detail:"" });
+    });
+    withState(s, () => {
+      const accs = Sel.accountSchedule();
+      eq("口座は2つにまとまる", accs.length, 2);
+      const A = accs.find(x => x.name === "口座A");
+      const Bk = accs.find(x => x.name === "口座B");
+      eq("口座Aには2枚ぶら下がる", A.methods.length, 2);
+      eq("同じ口座・同じ日は1行にまとまる", A.dates.length, 1);
+      eq("金額は合算される", A.dates[0].total, 3000);
+      eq("内訳にカード名が残る", A.dates[0].parts.length, 2);
+      eq("口座Bは別で集計", Bk.dates[0].total, 500);
+      ok("日付は昇順", A.dates.every((x,i,arr) => i === 0 || arr[i-1].payDate <= x.payDate));
+    });
+
+    // 口座を指定していないカードも落とさない
+    const n = seedState();
+    const nm = { id:"m9", name:"口座なしカード", kind:"card", order:9, archived:false,
+      billing:{ accountId:null, closeType:"月末", closeDay:31, payOffset:1, payDayType:"末日",
+                payDay:31, holidayAdjust:"調整なし" } };
+    n.methods.push(nm);
+    n.transactions.push({ id:"n1", date:monthKeyOf(now.getFullYear(), now.getMonth()+1)+"-05",
+      amount:700, type:"expense", incomeKind:null, categoryId:n.categories[0].id, methodId:"m9", detail:"" });
+    withState(n, () => {
+      const accs = Sel.accountSchedule();
+      eq("口座未指定もまとめに出る", accs.length, 1);
+      eq("見出しは『口座の指定なし』", accs[0].name, "口座の指定なし");
+    });
+
+    g("S12b 節約診断のテキスト");
+    const t = seedState();
+    const tc = t.categories[0].id, tm = t.methods[0].id;
+    const tmk = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+    t.transactions.push(
+      { id:"x1", date:tmk+"-03", amount:5000, type:"expense", incomeKind:null, categoryId:tc, methodId:tm, detail:"ひみつのメモ" },
+      { id:"x2", date:tmk+"-04", amount:250000, type:"income", incomeKind:"earning", categoryId:tc, methodId:tm, detail:"給与" }
+    );
+    withState(t, () => {
+      const summary = buildAnalysisText(3, false);
+      ok("要約に月ごとの収支が入る", summary.indexOf("■ 月ごとの収支") > -1);
+      ok("要約に用途別が入る",       summary.indexOf("■ 用途別") > -1);
+      // ★ 既定では明細（メモ）を含めない
+      ok("既定ではメモが入らない",   summary.indexOf("ひみつのメモ") === -1);
+      ok("既定では明細の節が無い",   summary.indexOf("■ 明細") === -1);
+
+      const full = buildAnalysisText(3, true);
+      ok("明示的に選べば明細が入る", full.indexOf("■ 明細") > -1);
+      ok("明示的に選べばメモも入る", full.indexOf("ひみつのメモ") > -1);
+      ok("明細つきのほうが長い",     full.length > summary.length);
+    });
+
+    g("S12c 祝日の取得で手動分が消えない");
+    const h = seedState();
+    h.holidays = {
+      "2026-01-01": { name:"元日", source:"api" },
+      "2026-12-30": { name:"会社休業日", source:"manual" },
+    };
+    withState(h, () => {
+      // 取得処理と同じ突き合わせをする（fetch は使わない）
+      const incoming = { "2026-01-01":"元日", "2026-12-30":"仕事納め", "2026-05-03":"憲法記念日" };
+      const H = Store.state.holidays;
+      let added = 0, kept = 0;
+      Object.entries(incoming).forEach(([d,name]) => {
+        if (H[d] && H[d].source === "manual"){ kept++; return; }
+        if (!H[d]) added++;
+        H[d] = { name:String(name), source:"api" };
+      });
+      eq("新規は足される", added, 1);
+      eq("手動分は上書きしない", kept, 1);
+      eq("手動で付けた名前が残る", H["2026-12-30"].name, "会社休業日");
+      eq("手動の印も残る", H["2026-12-30"].source, "manual");
+      ok("休業日は営業日でなくなる", !Sel.isBusinessDay(parseDate("2026-12-30")));
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -3291,6 +3747,52 @@ document.addEventListener("change", e => {
   }, D.BUDGET);
 });
 
+/* バックアップの読み込み。壊れたファイルで家計簿が消えないよう、
+   検証 → スナップショット → 差し替え → 報告（取り消し付き）の順で進める。 */
+document.addEventListener("change", e => {
+  if (e.target.id !== "io-import") return;
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const snapshot = JSON.parse(JSON.stringify(Store.state));
+    try{
+      const parsed = JSON.parse(reader.result);
+      // 先に「このアプリのデータか」を確かめる。これをしないと無関係なJSONが
+      // 空の状態に化けて、既存の家計簿を消してしまう
+      if (!looksLikeKakeibo(parsed)) throw new Error("この家計簿のバックアップファイルではないようです");
+      // 移行チェーンを通すので、v1形式の古いバックアップもそのまま読める
+      const r = validate(migrate(parsed));
+
+      // 中身のあるデータを空で置き換えようとしたら、一度確認する
+      const had = snapshot.transactions.length;
+      const will = r.state.transactions.length;
+      if (had > 0 && will === 0 &&
+          !confirm(`今ある ${had} 件の記録が、0件のファイルで置き換えられます。よろしいですか？`)){
+        throw new Error("読み込みを中止しました");
+      }
+      try { localStorage.setItem(KEY_UNDO, JSON.stringify(snapshot)); } catch(err){}
+      Store.replace(r.state);
+      View.settings();
+
+      const bits = [r.state.transactions.length + "件の記録"];
+      if (r.repaired.length) bits.push("修復 " + r.repaired.length + "件");
+      if (r.errors.length)   bits.push("読めなかった行 " + r.errors.length + "件");
+      Toast.show("読み込みました（" + bits.join(" / ") + "）", {
+        actionLabel:"元に戻す", ms:12000,
+        onAction(){ Store.replace(snapshot); View.settings(); Toast.show("元に戻しました"); },
+      });
+    }catch(err){
+      Store.replace(snapshot);          // 何も変えずに戻す
+      Toast.show("読み込めませんでした: " + (err && err.message || err), {kind:"err", ms:0});
+    }
+  };
+  reader.onerror = () => Toast.show("ファイルを読めませんでした", {kind:"err"});
+  reader.readAsText(file);
+});
+
 /* グラフのホバー用ツールチップ */
 (function(){
   let tip = null;
@@ -3342,7 +3844,7 @@ if (new URLSearchParams(location.search).get("selftest") === "1"){
   }
 }
 
-window.KB = { Store, Sel, Actions, Test, migrate, validate, seedState, version: APP_VERSION };
+window.KB = { Store, Sel, Actions, Test, migrate, validate, looksLikeKakeibo, seedState, buildAnalysisText, version: APP_VERSION };
 
 })();
 </script>
