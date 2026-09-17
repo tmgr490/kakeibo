@@ -15,7 +15,7 @@
  *   updateViaCache:'none' を付けないと、最大10分このファイル自体が
  *   古いまま見えることがある。
  */
-const CACHE = "kakeibo-2026-09-17a";
+const CACHE = "kakeibo-2026-09-17b";
 
 const SHELL = [
   "./",

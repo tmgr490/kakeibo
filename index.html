@@ -229,13 +229,16 @@ try{
   .panel > h2{ font-size:14px; color:var(--ink); font-weight:800; margin-bottom:4px; }
   .note{ font-size:11.5px; color:var(--ink-soft); line-height:1.6; margin:0 0 10px; }
 
-  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  @container (max-width: 420px){ .grid{ grid-template-columns:1fr; } }
+  /* 幅が足りなければ自動で1列に落ちる。コンテナクエリに頼らないのは、
+     入力シートが <dialog> で main の外にあり、あちらの @container が効かないため。
+     日付入力は最小幅を持つので、min-width:0 を付けないと縮めず隣にはみ出す。 */
+  .grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+  .grid > *{ min-width:0; }
 
-  label.field{ display:flex; flex-direction:column; gap:5px; font-size:11.5px; color:var(--ink-soft); font-weight:700; }
+  label.field{ display:flex; flex-direction:column; gap:5px; font-size:11.5px; color:var(--ink-soft); font-weight:700; min-width:0; }
   input,select,textarea{
     font-family:inherit; font-size:15px; padding:10px 11px; border:1px solid var(--line);
-    border-radius:11px; background:var(--surface); color:var(--ink); width:100%;
+    border-radius:11px; background:var(--surface); color:var(--ink); width:100%; min-width:0;
     transition:border-color .18s var(--ease-out), box-shadow .18s var(--ease-out);
   }
   input:focus,select:focus,textarea:focus{
@@ -342,6 +345,17 @@ try{
   }
   dialog.sheet::backdrop{ background:rgba(0,0,0,.4); backdrop-filter:blur(2px); }
   dialog.sheet .sheet-in{ padding:8px 16px calc(16px + var(--safe-b)); max-height:92dvh; overflow-y:auto; }
+  /* 入力シートは、テンキーを下に固定して、それ以外を上でスクロールさせる。
+     金額の表示だけはテンキーのすぐ上に置く（打っている数字が見えないと困るため）。 */
+  dialog.sheet .sheet-in.split{ display:flex; flex-direction:column; padding:8px 0 0; overflow:hidden; }
+  dialog.sheet .sheet-in.split > .grabber,
+  dialog.sheet .sheet-in.split > .sheet-head{ flex:0 0 auto; margin-left:16px; margin-right:16px; }
+  dialog.sheet .sheet-scroll{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:0 16px 14px;
+                              -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  dialog.sheet .sheet-foot{
+    flex:0 0 auto; padding:10px 16px calc(12px + var(--safe-b));
+    border-top:1px solid var(--line); background:var(--surface);
+  }
   dialog.sheet .grabber{ width:38px; height:4px; border-radius:3px; background:var(--line); margin:8px auto 10px; }
   dialog.sheet .sheet-head{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
   dialog.sheet .sheet-head h2{ font-size:15px; font-weight:800; flex:1; }
@@ -1813,10 +1827,12 @@ View.appbar = function(){
 View.entrySheet = function(){
   const host = $("#sheet-entry-in");
   if (!host) return;
+  host.classList.add("split");
   const cats = Sel.entryCategories();
   const mths = Sel.activeMethods();
   const isIncome = Entry.type === "income";
   const v = Entry.value();
+  const tpl = Entry.editId ? [] : Sel.templates();
 
   mount(host, html`
     <div class="grabber"></div>
@@ -1825,63 +1841,30 @@ View.entrySheet = function(){
       <button class="btn ghost small" data-act="entry:close">閉じる</button>
     </div>
 
-    <div class="seg" role="group" aria-label="種別">
-      <button data-act="entry:type" data-v="expense"  aria-pressed="${String(Entry.type==="expense")}">💸 支出</button>
-      <button data-act="entry:type" data-v="refund"   aria-pressed="${String(isIncome && Entry.incomeKind==="refund")}">↩️ 立替精算</button>
-      <button data-act="entry:type" data-v="earning"  aria-pressed="${String(isIncome && Entry.incomeKind==="earning")}">💰 収入</button>
-    </div>
+    <div class="sheet-scroll">
+      <div class="seg" role="group" aria-label="種別">
+        <button data-act="entry:type" data-v="expense"  aria-pressed="${String(Entry.type==="expense")}">💸 支出</button>
+        <button data-act="entry:type" data-v="refund"   aria-pressed="${String(isIncome && Entry.incomeKind==="refund")}">↩️ 立替精算</button>
+        <button data-act="entry:type" data-v="earning"  aria-pressed="${String(isIncome && Entry.incomeKind==="earning")}">💰 収入</button>
+      </div>
 
-    <div class="amount-display" style="margin-top:10px">
-      <div class="expr num">${Entry.exprText()}</div>
-      <div class="val num ${isIncome ? "in" : ""}" role="textbox" aria-live="polite" aria-label="金額">${yen(v)}</div>
-    </div>
+      ${tpl.length ? html`
+        <div class="note mb0" style="margin:14px 0 4px">よく使う入力</div>
+        <div class="chip-row">
+          ${tpl.map(t => html`
+            <button class="chip tpl" data-act="entry:tpl" data-id="${t.id}">
+              <span class="dot" style="background:${raw(slotVar(Sel.cat(t.categoryId).colorSlot))}"></span>${t.label}
+              ${t.amount ? html`<span class="tpl-amt">${yen(t.amount)}</span>` : ""}
+            </button>`)}
+        </div>` : ""}
 
-    <div class="keypad">
-      <button data-act="key" data-k="7">7</button>
-      <button data-act="key" data-k="8">8</button>
-      <button data-act="key" data-k="9">9</button>
-      <button data-act="key" data-k="back" class="op" aria-label="1文字削除">⌫</button>
-
-      <button data-act="key" data-k="4">4</button>
-      <button data-act="key" data-k="5">5</button>
-      <button data-act="key" data-k="6">6</button>
-      <button data-act="key" data-k="+" class="op">＋</button>
-
-      <button data-act="key" data-k="1">1</button>
-      <button data-act="key" data-k="2">2</button>
-      <button data-act="key" data-k="3">3</button>
-      <button data-act="key" data-k="-" class="op">−</button>
-
-      <button data-act="key" data-k="00">00</button>
-      <button data-act="key" data-k="0">0</button>
-      <button data-act="key" data-k="clear" class="op">C</button>
-      <button data-act="entry:save" class="save" style="grid-row:auto">保存</button>
-    </div>
-
-    ${(() => {
-      const tpl = Sel.templates();
-      if (!tpl.length || Entry.editId) return "";
-      return html`
-        <div style="margin-top:14px">
-          <div class="note mb0" style="margin-bottom:4px">よく使う入力</div>
-          <div class="chip-row">
-            ${tpl.map(t => html`
-              <button class="chip tpl" data-act="entry:tpl" data-id="${t.id}">
-                <span class="dot" style="background:${raw(slotVar(Sel.cat(t.categoryId).colorSlot))}"></span>${t.label}
-                ${t.amount ? html`<span class="tpl-amt">${yen(t.amount)}</span>` : ""}
-              </button>`)}
-          </div>
-        </div>`;
-    })()}
-
-    <div style="margin-top:14px">
-      <div class="note mb0" style="margin-bottom:4px">用途</div>
+      <div class="note mb0" style="margin:10px 0 4px">用途</div>
       <div class="chip-row">
         ${cats.map(c => html`<button class="chip" data-act="entry:cat" data-id="${c.id}" aria-pressed="${String(c.id===Entry.categoryId)}"><span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${(c.icon?c.icon+" ":"")+c.name}</button>`)}
         <button class="chip add" data-act="cat:quickadd">＋ 追加</button>
       </div>
 
-      <div class="note mb0" style="margin-bottom:4px;margin-top:4px">支払方法</div>
+      <div class="note mb0" style="margin-bottom:4px">支払方法</div>
       <div class="chip-row">
         ${mths.map(m => html`<button class="chip" data-act="entry:mth" data-id="${m.id}" aria-pressed="${String(m.id===Entry.methodId)}">${m.name}</button>`)}
         <button class="chip add" data-act="mth:quickadd">＋ 追加</button>
@@ -1900,6 +1883,34 @@ View.entrySheet = function(){
         ${Entry.editId
           ? html`<button class="btn danger small" data-act="tx:delete" data-id="${Entry.editId}">この記録を削除</button>`
           : html`<button class="btn ghost small" data-act="entry:savetpl">★ この組み合わせをよく使う入力に登録</button>`}
+      </div>
+    </div>
+
+    <div class="sheet-foot">
+      <div class="amount-display">
+        <div class="expr num">${Entry.exprText()}</div>
+        <div class="val num ${isIncome ? "in" : ""}" role="textbox" aria-live="polite" aria-label="金額">${yen(v)}</div>
+      </div>
+      <div class="keypad">
+        <button data-act="key" data-k="7">7</button>
+        <button data-act="key" data-k="8">8</button>
+        <button data-act="key" data-k="9">9</button>
+        <button data-act="key" data-k="back" class="op" aria-label="1文字削除">⌫</button>
+
+        <button data-act="key" data-k="4">4</button>
+        <button data-act="key" data-k="5">5</button>
+        <button data-act="key" data-k="6">6</button>
+        <button data-act="key" data-k="+" class="op">＋</button>
+
+        <button data-act="key" data-k="1">1</button>
+        <button data-act="key" data-k="2">2</button>
+        <button data-act="key" data-k="3">3</button>
+        <button data-act="key" data-k="-" class="op">−</button>
+
+        <button data-act="key" data-k="00">00</button>
+        <button data-act="key" data-k="0">0</button>
+        <button data-act="key" data-k="clear" class="op">C</button>
+        <button data-act="entry:save" class="save" style="grid-row:auto">保存</button>
       </div>
     </div>
   `);
