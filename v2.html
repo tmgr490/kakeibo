@@ -459,6 +459,53 @@ try{
   .tip.on{ opacity:1; }
   .tip .t2{ display:block; font-weight:500; opacity:.8; font-size:10.5px; margin-top:2px; }
 
+  /* --- 支払予定 --- */
+  .pay-row{
+    display:flex; align-items:center; gap:10px; width:100%; padding:12px 2px;
+    border:0; border-bottom:1px solid var(--line); background:transparent; color:inherit;
+    text-align:left; cursor:pointer;
+  }
+  .pay-row:active{ background:var(--surface-2); }
+  .pay-main{ flex:1; min-width:0; }
+  .pay-date{ display:flex; align-items:center; gap:7px; font-size:13.5px; font-weight:800; flex-wrap:wrap; }
+  .pay-sub{ display:block; font-size:11px; color:var(--ink-soft); margin-top:3px; }
+  .pay-amt{ font-size:16px; font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .pay-detail{ background:var(--surface-2); border-radius:10px; padding:8px 11px; margin:2px 0 10px; }
+  .pay-item{ display:flex; gap:10px; align-items:baseline; padding:5px 0; font-size:12px; }
+  .pay-item .d{ color:var(--ink-faint); flex:0 0 auto; font-variant-numeric:tabular-nums; }
+  .pay-item .n{ flex:1; min-width:0; display:flex; align-items:center; gap:6px; }
+  .pay-item .n > span{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pay-item .a{ font-weight:700; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .pay-item .a.in{ color:var(--accent); }
+
+  /* --- 設定のサブタブ --- */
+  .subtabs{ display:flex; gap:6px; overflow-x:auto; padding:2px 1px 10px; scrollbar-width:none; }
+  .subtabs::-webkit-scrollbar{ display:none; }
+  .subtabs button{
+    flex:0 0 auto; appearance:none; border:1px solid var(--line); background:var(--surface);
+    color:var(--ink-soft); border-radius:9px; padding:8px 13px; font-size:12.5px; font-weight:700;
+    cursor:pointer; min-height:38px; white-space:nowrap;
+  }
+  .subtabs button[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  /* --- 設定の一覧行 --- */
+  .item{
+    display:flex; align-items:center; gap:10px; padding:11px 2px;
+    border-bottom:1px solid var(--line);
+  }
+  .item:last-child{ border-bottom:none; }
+  .item .body{ flex:1; min-width:0; }
+  .item .t1{ font-size:13.5px; font-weight:700; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .item .t2{ font-size:11px; color:var(--ink-soft); margin-top:3px; }
+  .item .amt{ font-size:14px; font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .item .acts{ display:flex; gap:5px; flex:0 0 auto; }
+  .icon-sm{
+    appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink-soft);
+    width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:13px;
+  }
+  .icon-sm:active{ transform:scale(.92); }
+  .icon-sm.danger{ color:var(--red); }
+
   .soon{ text-align:center; padding:40px 18px; color:var(--ink-faint); }
   .soon .big{ font-size:40px; display:block; margin-bottom:10px; }
   .soon .ph{ font-size:13px; font-weight:700; color:var(--ink-soft); }
@@ -1198,6 +1245,60 @@ Sel.pace = memo(function(monthKey){
   };
 });
 
+/** サブスクの月次換算。v1は「月次のものだけ単純合計」していて、
+ *  週次と年次を黙って無視していた。ここでは正しく換算する。 */
+Sel.monthlyEquivalent = sub => {
+  if (!sub || sub.status === "停止" || sub.status === "解約済み") return 0;
+  const a = Number(sub.amount) || 0;
+  if (sub.interval === "週次") return a * 52 / 12;
+  if (sub.interval === "年次") return a / 12;
+  return a;
+};
+
+/** カード（＝締め日を持つ支払方法）の支払予定。
+ *  実取引とサブスク発生分をまとめて、それぞれの支払日で束ねる。 */
+Sel.cardSchedule = memo(function(methodId){
+  const m = byId(Store.state.methods, methodId);
+  if (!m || !m.billing) return null;
+
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth() - 4, 1);
+  const to   = new Date(today.getFullYear() + 1, today.getMonth(), 0);
+  const entries = Sel.entriesInRange(fmt(from), fmt(to)).filter(e => e.methodId === methodId);
+
+  const byPay = new Map();
+  for (const e of entries){
+    const sc = Sel.scheduleFor(methodId, e.date);
+    if (!sc) continue;
+    const key = fmt(sc.payDate);
+    if (!byPay.has(key)) byPay.set(key, {
+      payDate:key, cycleEnd:fmt(sc.cycleEnd), adjusted:sc.adjusted,
+      rawPayDate:fmt(sc.rawPayDate), total:0, items:[],
+    });
+    const g = byPay.get(key);
+    // 立替精算はその請求から差し引かれる
+    g.total += e.type === "income" ? -e.amount : e.amount;
+    g.items.push(e);
+  }
+
+  const todayStr_ = todayStr();
+  const groups = Array.from(byPay.values())
+    .sort((a,b) => a.payDate < b.payDate ? -1 : 1)
+    .map(g => { g.items.sort((a,b) => a.date < b.date ? 1 : -1); g.past = g.payDate < todayStr_; return g; });
+
+  return { method:m, account: m.billing.accountId ? Sel.acc(m.billing.accountId) : null,
+           groups, upcoming: groups.filter(g => !g.past) };
+});
+
+/** 締め日・支払日の設定を日本語1行で説明する */
+Sel.billingText = function(b){
+  if (!b) return "";
+  const close = b.closeType === "月末" ? "月末締め" : (b.closeDay + "日締め");
+  const mon = b.payOffset === 0 ? "当月" : b.payOffset === 1 ? "翌月" : "翌々月";
+  const day = b.payDayType === "末日" ? "末日" : (b.payDay + "日");
+  return close + " ／ " + mon + day + "払い";
+};
+
 /* ====================================================================
    §8 CHART — インラインSVGの手書き。ライブラリは使わない。
    ==================================================================== */
@@ -1382,6 +1483,105 @@ const Entry = {
     View.entrySheet();
   },
 };
+
+/* --- 支払方法の編集フォーム（カードは締め日つきの支払方法として扱う） --- */
+const MethodForm = {
+  id:null, name:"", kind:"cash", billing:null,
+  reset(){ this.id = null; this.name = ""; this.kind = "cash"; this.billing = null; },
+  load(m){
+    this.id = m.id; this.name = m.name; this.kind = m.kind;
+    this.billing = m.billing ? JSON.parse(JSON.stringify(m.billing)) : null;
+    if (this.billing) this.kind = "card";
+  },
+  ensureBilling(){
+    if (!this.billing) this.billing = { accountId:null, closeType:"毎月指定日", closeDay:15,
+      payOffset:1, payDayType:"date", payDay:27, holidayAdjust:"翌営業日" };
+  },
+  read(){
+    const g = id => { const el = $("#" + id); return el ? el.value : null; };
+    if (g("mf-name") != null) this.name = g("mf-name").trim();
+    if (this.kind === "card"){
+      this.ensureBilling();
+      const b = this.billing;
+      if (g("mf-account")  != null) b.accountId  = g("mf-account") || null;
+      if (g("mf-closetype")!= null) b.closeType  = g("mf-closetype");
+      if (g("mf-closeday") != null) b.closeDay   = Math.min(31, Math.max(1, Number(g("mf-closeday")) || 1));
+      if (g("mf-payoffset")!= null) b.payOffset  = Number(g("mf-payoffset"));
+      if (g("mf-paydaytype")!=null) b.payDayType = g("mf-paydaytype");
+      if (g("mf-payday")   != null) b.payDay     = Math.min(31, Math.max(1, Number(g("mf-payday")) || 1));
+      if (g("mf-holiday")  != null) b.holidayAdjust = g("mf-holiday");
+    }
+  },
+  save(){
+    this.read();
+    if (!this.name){ Toast.show("名前を入力してください", {kind:"err"}); return; }
+    const dup = Store.state.methods.some(m => m.id !== this.id && !m.archived && m.name === this.name);
+    if (dup){ Toast.show("同じ名前の支払方法があります", {kind:"err"}); return; }
+    const payload = { name:this.name, kind:this.kind,
+                      billing: this.kind === "card" ? this.billing : null };
+    if (this.id){
+      const id = this.id;
+      Store.commit(s => Object.assign(byId(s.methods, id), payload), D.METHOD);
+    } else {
+      Store.commit(s => s.methods.push(Object.assign(
+        { id:uid("mth"), order:s.methods.length, archived:false }, payload)), D.METHOD);
+    }
+    closeSheet("#sheet-detail");
+    View.settings();
+    Toast.show("保存しました");
+  },
+};
+
+/* --- サブスクの編集フォーム --- */
+const SubForm = {
+  id:null, name:"", amount:"", methodId:null, categoryId:CAT_SUB,
+  interval:"月次", start:"", end:"", status:"有効", pauseFrom:"", pauseTo:"", memo:"",
+  reset(){
+    const m = Sel.activeMethods()[0];
+    Object.assign(this, { id:null, name:"", amount:"", methodId: m ? m.id : null,
+      categoryId:CAT_SUB, interval:"月次", start:todayStr(), end:"", status:"有効",
+      pauseFrom:"", pauseTo:"", memo:"" });
+  },
+  load(x){
+    Object.assign(this, { id:x.id, name:x.name, amount:String(x.amount), methodId:x.methodId,
+      categoryId:x.categoryId || CAT_SUB, interval:x.interval, start:x.start, end:x.end || "",
+      status:x.status, pauseFrom:x.pauseFrom || "", pauseTo:x.pauseTo || "", memo:x.memo || "" });
+  },
+  read(){
+    const g = id => { const el = $("#" + id); return el ? el.value : null; };
+    ["name","amount","start","end","memo","pauseFrom","pauseTo"].forEach(k => {
+      const v = g("sf-" + k.toLowerCase());
+      if (v != null) this[k] = v;
+    });
+  },
+  save(){
+    this.read();
+    const amount = Math.abs(Math.round(Number(this.amount) || 0));
+    if (!this.name.trim()){ Toast.show("サービス名を入力してください", {kind:"err"}); return; }
+    if (!amount){ Toast.show("金額を入力してください", {kind:"err"}); return; }
+    if (!this.start){ Toast.show("開始日を入力してください", {kind:"err"}); return; }
+    if (this.status === "解約予定" && !this.end){ Toast.show("解約予定は「いつまで」を入れてください", {kind:"err"}); return; }
+    const payload = {
+      name:this.name.trim(), amount, methodId:this.methodId, categoryId:this.categoryId,
+      interval:this.interval, start:this.start, end:this.end || null, status:this.status,
+      pauseFrom:this.pauseFrom || null, pauseTo:this.pauseTo || null, memo:this.memo || "",
+    };
+    if (this.id){
+      const id = this.id;
+      Store.commit(s => Object.assign(byId(s.subscriptions, id), payload), D.SUB);
+    } else {
+      Store.commit(s => s.subscriptions.push(Object.assign({ id:uid("sub") }, payload)), D.SUB);
+    }
+    closeSheet("#sheet-detail");
+    View.settings();
+    Toast.show("保存しました");
+  },
+};
+
+function openForm(kind){
+  if (kind === "method") View.methodForm(); else View.subForm();
+  openSheet("#sheet-detail");
+}
 
 /* ====================================================================
    §7 VIEW
@@ -1722,31 +1922,350 @@ View.history = function(){
   `);
 };
 
-/* --- 支払予定（Phase 3） --- */
-View.schedule = function(){
-  const host = $('[data-route="schedule"]');
-  const cards = Store.state.methods.filter(m => m.billing);
-  mount(host, html`
-    <div class="panel">
-      <h2>カード別 支払予定</h2>
-      <p class="note">締め日・支払日・休日調整をもとに、次回以降の支払日と金額を自動計算します。</p>
-      <div class="soon">
-        <span class="big">📅</span>
-        <div class="ph">支払予定・口座残高予測</div>
-        <div class="ph2">Phase 3〜4 で実装します。<br>計算エンジンは移植済みで、登録済みカードは ${cards.length} 件です。</div>
+/* --- 支払方法の編集シート --- */
+View.methodForm = function(){
+  const F = MethodForm, b = F.billing;
+  const accounts = Store.state.accounts.filter(a => !a.archived);
+  mount($("#sheet-detail-in"), html`
+    <div class="grabber"></div>
+    <div class="sheet-head">
+      <h2>${F.id ? "支払方法を編集" : "支払方法を追加"}</h2>
+      <button class="btn ghost small" data-act="sheet:close">閉じる</button>
+    </div>
+
+    <label class="field">名前
+      <input type="text" id="mf-name" value="${F.name}" placeholder="例: メインのクレジットカード">
+    </label>
+
+    <div class="note" style="margin:12px 0 4px">種類</div>
+    <div class="chip-row">
+      ${[["cash","現金"],["card","クレジットカード"],["emoney","電子マネー"],["bank","口座引落"]].map(([k,label]) =>
+        html`<button class="chip" data-act="mth:kind" data-v="${k}" aria-pressed="${String(F.kind===k)}">${label}</button>`)}
+    </div>
+
+    ${F.kind === "card" ? html`
+      <p class="note">締め日と支払日を入れると、支払予定と口座の引落予測に反映されます。</p>
+      <div class="grid">
+        <label class="field">締め日
+          <select id="mf-closetype">
+            <option value="毎月指定日" ${b.closeType==="毎月指定日"?"selected":""}>毎月指定日</option>
+            <option value="月末"       ${b.closeType==="月末"?"selected":""}>月末</option>
+          </select>
+        </label>
+        ${b.closeType === "毎月指定日"
+          ? html`<label class="field">締め日（日）
+                   <input type="number" id="mf-closeday" min="1" max="31" inputmode="numeric" value="${b.closeDay}"></label>`
+          : html`<div></div>`}
+        <label class="field">支払月
+          <select id="mf-payoffset">
+            <option value="0" ${b.payOffset===0?"selected":""}>当月</option>
+            <option value="1" ${b.payOffset===1?"selected":""}>翌月</option>
+            <option value="2" ${b.payOffset===2?"selected":""}>翌々月</option>
+          </select>
+        </label>
+        <label class="field">支払日
+          <select id="mf-paydaytype">
+            <option value="date" ${b.payDayType==="date"?"selected":""}>日付指定</option>
+            <option value="末日" ${b.payDayType==="末日"?"selected":""}>末日</option>
+          </select>
+        </label>
+        ${b.payDayType === "date"
+          ? html`<label class="field">支払日（日）
+                   <input type="number" id="mf-payday" min="1" max="31" inputmode="numeric" value="${b.payDay}"></label>`
+          : html`<div></div>`}
+        <label class="field">土日祝にあたったら
+          <select id="mf-holiday">
+            ${HOLIDAY_ADJUST.map(r => html`<option value="${r}" ${b.holidayAdjust===r?"selected":""}>${r}</option>`)}
+          </select>
+        </label>
+        <label class="field">引落口座
+          <select id="mf-account">
+            <option value="">（指定しない）</option>
+            ${accounts.map(a => html`<option value="${a.id}" ${b.accountId===a.id?"selected":""}>${a.name}</option>`)}
+          </select>
+        </label>
       </div>
+      <p class="note" style="margin-top:8px">${Sel.billingText(b)}</p>
+    ` : ""}
+
+    <div class="btn-row">
+      <button class="btn" data-act="mth:save">保存する</button>
     </div>
   `);
 };
 
-/* --- 設定（Phase 4） --- */
+/* --- サブスクの編集シート --- */
+View.subForm = function(){
+  const F = SubForm;
+  const cats = Sel.activeCategories();
+  mount($("#sheet-detail-in"), html`
+    <div class="grabber"></div>
+    <div class="sheet-head">
+      <h2>${F.id ? "サブスクを編集" : "サブスクを追加"}</h2>
+      <button class="btn ghost small" data-act="sheet:close">閉じる</button>
+    </div>
+
+    <div class="grid">
+      <label class="field">サービス名
+        <input type="text" id="sf-name" value="${F.name}" placeholder="例: 動画配信">
+      </label>
+      <label class="field">金額（円）
+        <input type="number" id="sf-amount" inputmode="numeric" min="0" value="${F.amount}">
+      </label>
+    </div>
+
+    <div class="note" style="margin:12px 0 4px">頻度</div>
+    <div class="chip-row">
+      ${INTERVALS.map(v => html`<button class="chip" data-act="sub:interval" data-v="${v}" aria-pressed="${String(F.interval===v)}">${v}</button>`)}
+    </div>
+
+    <div class="note" style="margin-bottom:4px">支払方法</div>
+    <div class="chip-row">
+      ${Sel.activeMethods().map(m => html`<button class="chip" data-act="sub:mth" data-id="${m.id}" aria-pressed="${String(F.methodId===m.id)}">${m.name}</button>`)}
+    </div>
+
+    <div class="note" style="margin-bottom:4px">用途（家賃を「住居」にするなど、変更できます）</div>
+    <div class="chip-row">
+      ${cats.map(c => html`<button class="chip" data-act="sub:cat" data-id="${c.id}" aria-pressed="${String(F.categoryId===c.id)}"><span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${c.name}</button>`)}
+    </div>
+
+    <div class="note" style="margin:8px 0 4px">状態</div>
+    <div class="chip-row">
+      ${SUB_STATUS.map(v => html`<button class="chip" data-act="sub:status" data-v="${v}" aria-pressed="${String(F.status===v)}">${v}</button>`)}
+    </div>
+    <p class="note">
+      ${F.status === "有効"     ? "毎回そのまま発生します。"
+      : F.status === "一時停止" ? "指定した期間だけ発生を飛ばします。期間を過ぎたらまた発生します。"
+      : F.status === "解約予定" ? "指定した日まで発生し、それ以降は出なくなります。"
+      :                           "発生しません。記録としては残ります。"}
+    </p>
+
+    <div class="grid">
+      <label class="field">開始日（初回の発生日）
+        <input type="date" id="sf-start" value="${F.start}">
+      </label>
+      ${F.status === "解約予定"
+        ? html`<label class="field">いつまで
+                 <input type="date" id="sf-end" value="${F.end}"></label>`
+        : html`<div></div>`}
+      ${F.status === "一時停止" ? html`
+        <label class="field">停止する期間（から）
+          <input type="date" id="sf-pausefrom" value="${F.pauseFrom}">
+        </label>
+        <label class="field">停止する期間（まで・空欄なら当面）
+          <input type="date" id="sf-pauseto" value="${F.pauseTo}">
+        </label>` : ""}
+    </div>
+
+    <label class="field" style="margin-top:10px">メモ
+      <input type="text" id="sf-memo" value="${F.memo}" placeholder="任意">
+    </label>
+
+    <div class="btn-row">
+      <button class="btn" data-act="sub:save">保存する</button>
+      ${F.id ? html`<button class="btn danger small" data-act="sub:delete" data-id="${F.id}">削除</button>` : ""}
+    </div>
+  `);
+};
+
+/* --- 支払予定 --- */
+const ScheduleUI = { open:{} };
+
+View.schedule = function(){
+  const host = $('[data-route="schedule"]');
+  const cards = Sel.activeMethods().filter(m => m.billing);
+
+  if (!cards.length){
+    mount(host, html`
+      <div class="panel">
+        <h2>カード別 支払予定</h2>
+        <div class="empty">
+          <span class="big">💳</span>
+          締め日と支払日を登録すると、<br>次回いくら引き落とされるかが自動で出ます。
+          <div class="btn-row" style="justify-content:center">
+            <button class="btn" data-act="go" data-to="settings">支払方法を設定する</button>
+          </div>
+        </div>
+      </div>`);
+    return;
+  }
+
+  mount(host, html`
+    <p class="note" style="padding:0 2px">締め日・支払日・休日調整をもとに、次回以降の引き落とし日と金額を計算しています。サブスクの発生予定分も含みます。</p>
+    <div class="cols">
+      ${cards.map(m => {
+        const sc = Sel.cardSchedule(m.id);
+        const up = sc.upcoming.slice(0,3);
+        return html`
+          <div class="panel">
+            <h2>${m.name}</h2>
+            <p class="note">${Sel.billingText(m.billing)}${sc.account ? "　引落口座: " + sc.account.name : ""}</p>
+            ${up.length === 0
+              ? html`<div class="empty" style="padding:20px">今後の支払予定はまだありません。</div>`
+              : up.map((g,i) => html`
+                  <button class="pay-row" data-act="sched:toggle" data-key="${m.id + "|" + g.payDate}"
+                          aria-expanded="${String(!!ScheduleUI.open[m.id + "|" + g.payDate])}">
+                    <span class="pay-main">
+                      <span class="pay-date">${jpDate(g.payDate)}
+                        ${i === 0 ? html`<span class="tag">次回</span>` : ""}
+                        ${g.adjusted ? html`<span class="tag gray">休日調整済</span>` : ""}
+                      </span>
+                      <span class="pay-sub">${g.cycleEnd.slice(5).replace("-","/")}締め分 ・ ${g.items.length}件</span>
+                    </span>
+                    <span class="pay-amt">${yen(g.total)}</span>
+                  </button>
+                  ${ScheduleUI.open[m.id + "|" + g.payDate]
+                    ? html`<div class="pay-detail">
+                        ${g.items.map(e => html`
+                          <div class="pay-item">
+                            <span class="d">${e.date.slice(5).replace("-","/")}</span>
+                            <span class="n">${e.label}${e.source === "sub" ? html`<span class="tag gray">サブスク</span>` : ""}</span>
+                            <span class="a ${e.type === "income" ? "in" : ""}">${e.type === "income" ? "−" : ""}${yen(e.amount)}</span>
+                          </div>`)}
+                      </div>`
+                    : ""}`)}
+          </div>`;
+      })}
+    </div>`);
+};
+
+/* --- 設定 --- */
+const SettingsUI = { tab:"methods" };
+
 View.settings = function(){
   const host = $('[data-route="settings"]');
+  const tabs = [["methods","支払方法"],["subs","サブスク"],["cats","用途"],["other","その他"]];
+  mount(host, html`
+    <div class="subtabs">
+      ${tabs.map(([k,label]) => html`<button data-act="set:tab" data-v="${k}" aria-pressed="${String(SettingsUI.tab===k)}">${label}</button>`)}
+    </div>
+    ${SettingsUI.tab === "methods" ? View._methods()
+    : SettingsUI.tab === "subs"    ? View._subs()
+    : SettingsUI.tab === "cats"    ? View._cats()
+    :                                View._other()}`);
+};
+
+/* 支払方法（カードは「締め日を持つ支払方法」として統合してある。
+   v1のように名前の一致で繋いでいないので、改名しても支払予定は壊れない） */
+View._methods = function(){
+  const s = Store.state;
+  return html`
+    <div class="panel">
+      <h2>支払方法</h2>
+      <p class="note">クレジットカードは締め日と支払日を登録すると、支払予定と口座の引落予測に反映されます。名前を変えても記録との紐付けは切れません。</p>
+      ${Sel.activeMethods().map(m => html`
+        <div class="item">
+          <div class="body">
+            <div class="t1">${m.name}
+              ${m.billing ? html`<span class="tag">カード</span>` : html`<span class="tag gray">${({cash:"現金",emoney:"電子マネー",bank:"口座引落"})[m.kind] || "その他"}</span>`}
+            </div>
+            ${m.billing ? html`<div class="t2">${Sel.billingText(m.billing)}${m.billing.accountId && Sel.acc(m.billing.accountId) ? "　" + Sel.acc(m.billing.accountId).name : ""}</div>` : ""}
+          </div>
+          <div class="acts">
+            <button class="icon-sm" data-act="mth:edit" data-id="${m.id}" aria-label="${m.name}を編集">✏️</button>
+            <button class="icon-sm danger" data-act="mth:archive" data-id="${m.id}" aria-label="${m.name}を削除">🗑</button>
+          </div>
+        </div>`)}
+      <div class="btn-row"><button class="btn" data-act="mth:new">＋ 支払方法を追加</button></div>
+    </div>
+
+    <div class="panel">
+      <h2>引落口座</h2>
+      <p class="note">カードの引落先です。Phase 4 で残高予測に使います。</p>
+      ${s.accounts.filter(a => !a.archived).length === 0
+        ? html`<div class="empty" style="padding:18px">まだ登録がありません。</div>`
+        : s.accounts.filter(a => !a.archived).map(a => html`
+            <div class="item">
+              <div class="body"><div class="t1">${a.name}</div></div>
+              <div class="acts">
+                <button class="icon-sm" data-act="acc:rename" data-id="${a.id}" aria-label="${a.name}の名前を変更">✏️</button>
+                <button class="icon-sm danger" data-act="acc:archive" data-id="${a.id}" aria-label="${a.name}を削除">🗑</button>
+              </div>
+            </div>`)}
+      <div class="btn-row"><button class="btn ghost small" data-act="acc:new">＋ 口座を追加</button></div>
+    </div>`;
+};
+
+/* サブスク。v1では「有効」以外は全部同じ扱いで、一時停止も解約予定も黙って無視
+   されていた。ここでは4状態それぞれに意味を持たせている。 */
+View._subs = function(){
+  const subs = Store.state.subscriptions;
+  const active = subs.filter(x => x.status === "有効" || x.status === "解約予定");
+  const monthly = active.reduce((a,x) => a + Sel.monthlyEquivalent(x), 0);
+
+  const badge = x =>
+    x.status === "有効"     ? html`<span class="tag">有効</span>`
+  : x.status === "一時停止" ? html`<span class="tag gold">一時停止</span>`
+  : x.status === "解約予定" ? html`<span class="tag red">解約予定</span>`
+  :                           html`<span class="tag gray">停止</span>`;
+
+  const nextOf = x => {
+    const occ = Sel.subOccurrences(x, new Date(), new Date(Date.now() + 400*86400000));
+    return occ.length ? fmt(occ[0].date) : null;
+  };
+
+  return html`
+    <div class="panel">
+      <h2>サブスク・固定費</h2>
+      <p class="note">毎月・毎週・毎年の支払いを登録すると、集計にも支払予定にも自動で反映されます。記録として入力する必要はありません（入力すると二重に数えられます）。</p>
+      ${subs.length === 0
+        ? html`<div class="empty" style="padding:22px"><span class="big">🔁</span>まだ登録がありません。</div>`
+        : subs.map(x => {
+            const nx = nextOf(x);
+            return html`
+              <div class="item">
+                <div class="body">
+                  <div class="t1">${x.name} ${badge(x)}</div>
+                  <div class="t2">${x.interval} ・ ${Sel.mth(x.methodId).name} ・ ${Sel.cat(x.categoryId).name}${
+                    nx ? "　次回 " + jpDate(nx)
+                       : x.status === "有効" ? "　次回の予定なし" : ""}${
+                    x.status === "一時停止" && x.pauseFrom ? "　停止 " + x.pauseFrom + (x.pauseTo ? " 〜 " + x.pauseTo : " 〜") : ""}${
+                    x.status === "解約予定" && x.end ? "　" + x.end + " まで" : ""}</div>
+                </div>
+                <div class="amt">${yen(x.amount)}</div>
+                <div class="acts">
+                  <button class="icon-sm" data-act="sub:edit" data-id="${x.id}" aria-label="${x.name}を編集">✏️</button>
+                  <button class="icon-sm danger" data-act="sub:delete" data-id="${x.id}" aria-label="${x.name}を削除">🗑</button>
+                </div>
+              </div>`;
+          })}
+      <div class="total-box">
+        <div class="lbl">月あたりの合計（週次・年次も換算）</div>
+        <div class="val">${yen(monthly)}</div>
+      </div>
+      <div class="btn-row"><button class="btn" data-act="sub:new">＋ サブスクを追加</button></div>
+    </div>`;
+};
+
+View._cats = function(){
+  const { totals } = Sel.monthTotals(statusMonth());
+  return html`
+    <div class="panel">
+      <h2>用途</h2>
+      <p class="note">並び順は上から順に使われます。使わなくなった用途は削除すると入力候補から消えますが、過去の記録はそのまま残ります。</p>
+      ${Sel.activeCategories().map((c,i,arr) => html`
+        <div class="item">
+          <span class="sw" style="background:${raw(slotVar(c.colorSlot))};width:9px;height:26px;border-radius:4px;flex:0 0 auto"></span>
+          <div class="body">
+            <div class="t1">${(c.icon ? c.icon + " " : "") + c.name}${c.system ? html`<span class="tag gray">固定</span>` : ""}</div>
+            <div class="t2">今月 ${yen(totals[c.id] || 0)}</div>
+          </div>
+          <div class="acts">
+            <button class="icon-sm" data-act="cat:up" data-id="${c.id}" ${i === 0 ? "disabled" : ""} aria-label="上へ">↑</button>
+            <button class="icon-sm" data-act="cat:rename" data-id="${c.id}" aria-label="${c.name}の名前を変更">✏️</button>
+            ${c.system ? "" : html`<button class="icon-sm danger" data-act="cat:archive" data-id="${c.id}" aria-label="${c.name}を削除">🗑</button>`}
+          </div>
+        </div>`)}
+      <div class="btn-row"><button class="btn" data-act="cat:new">＋ 用途を追加</button></div>
+    </div>`;
+};
+
+View._other = function(){
   const s = Store.state;
   const size = (() => { try { return new Blob([JSON.stringify(s)]).size; } catch(e){ return 0; } })();
   const rep = s.meta.migrationReport;
 
-  mount(host, html`
+  return html`
     <div class="panel">
       <h2>表示</h2>
       <div class="seg" role="group" aria-label="テーマ">
@@ -1785,11 +2304,11 @@ View.settings = function(){
     <div class="panel">
       <div class="soon">
         <span class="big">⚙️</span>
-        <div class="ph">サブスク・カード・用途管理・祝日・節約診断</div>
-        <div class="ph2">Phase 3〜4 で実装します。</div>
+        <div class="ph">祝日データ・節約診断・CSV出力</div>
+        <div class="ph2">Phase 4 で実装します。</div>
       </div>
     </div>
-  `);
+  `;
 };
 
 /* ====================================================================
@@ -1816,6 +2335,7 @@ const Actions = {
   /* --- 入力 --- */
   "entry:open"(){ Entry.reset(); View.entrySheet(); openSheet("#sheet-entry"); },
   "entry:close"(){ closeSheet("#sheet-entry"); },
+  "sheet:close"(){ closeSheet("#sheet-detail"); },
   "entry:type"({v}){
     if (v === "expense"){ Entry.type = "expense"; }
     else { Entry.type = "income"; Entry.incomeKind = v; }
@@ -1902,6 +2422,130 @@ const Actions = {
 
   "budget:copyprev"(){ copyBudget("budget"); },
   "budget:fromactual"(){ copyBudget("actual"); },
+
+  /* --- 支払予定 --- */
+  "sched:toggle"({key}){
+    ScheduleUI.open[key] = !ScheduleUI.open[key];
+    View.schedule();
+  },
+
+  /* --- 設定 --- */
+  "set:tab"({v}){ SettingsUI.tab = v; View.settings(); },
+
+  /* 支払方法（カードを含む） */
+  "mth:new"(){ MethodForm.reset(); openForm("method"); },
+  "mth:edit"({id}){
+    const m = byId(Store.state.methods, id); if (!m) return;
+    MethodForm.load(m); openForm("method");
+  },
+  "mth:archive"({id}){
+    const m = byId(Store.state.methods, id); if (!m) return;
+    const used = Store.state.transactions.some(t => t.methodId === id)
+              || Store.state.subscriptions.some(x => x.methodId === id);
+    if (used && !confirm(m.name + " には記録が紐づいています。入力候補から外しますか？（過去の記録は残ります）")) return;
+    const prev = { archived:m.archived };
+    Store.commit(s => { byId(s.methods, id).archived = true; }, D.METHOD);
+    View.settings();
+    Toast.undo(m.name + " を外しました", () => {
+      Store.commit(s => { byId(s.methods, id).archived = prev.archived; }, D.METHOD);
+      View.settings();
+    });
+  },
+  "mth:kind"({v}){
+    MethodForm.read();                       // 再描画で入力中の値を失わないため
+    MethodForm.kind = v;
+    if (v !== "card") MethodForm.billing = null; else MethodForm.ensureBilling();
+    View.methodForm();
+  },
+  "mth:field"(){ /* 入力は change で拾う */ },
+  "mth:save"(){ MethodForm.save(); },
+
+  /* 引落口座 */
+  "acc:new"(){
+    const name = prompt("引落口座の名前（例: 給与口座）");
+    if (!name || !name.trim()) return;
+    Store.commit(s => s.accounts.push({ id:uid("acc"), name:name.trim(), balance:null,
+      balanceAsOf:null, order:s.accounts.length, archived:false }), D.ACCOUNT);
+    View.settings();
+  },
+  "acc:rename"({id}){
+    const a = Sel.acc(id); if (!a) return;
+    const name = prompt("口座の名前", a.name);
+    if (!name || !name.trim()) return;
+    Store.commit(s => { byId(s.accounts, id).name = name.trim(); }, D.ACCOUNT);
+    View.settings();
+  },
+  "acc:archive"({id}){
+    const a = Sel.acc(id); if (!a) return;
+    Store.commit(s => { byId(s.accounts, id).archived = true; }, D.ACCOUNT);
+    View.settings();
+    Toast.undo(a.name + " を外しました", () => {
+      Store.commit(s => { byId(s.accounts, id).archived = false; }, D.ACCOUNT); View.settings();
+    });
+  },
+
+  /* サブスク */
+  "sub:new"(){ SubForm.reset(); openForm("sub"); },
+  "sub:edit"({id}){
+    const x = byId(Store.state.subscriptions, id); if (!x) return;
+    SubForm.load(x); openForm("sub");
+  },
+  "sub:status"({v}){ SubForm.read(); SubForm.status = v; View.subForm(); },
+  "sub:interval"({v}){ SubForm.read(); SubForm.interval = v; View.subForm(); },
+  "sub:mth"({id}){ SubForm.read(); SubForm.methodId = id; View.subForm(); },
+  "sub:cat"({id}){ SubForm.read(); SubForm.categoryId = id; View.subForm(); },
+  "sub:save"(){ SubForm.save(); },
+  "sub:delete"({id}){
+    const x = byId(Store.state.subscriptions, id); if (!x) return;
+    closeSheet("#sheet-detail");
+    const snap = Store.commit(s => {
+      const i = s.subscriptions.findIndex(v => v.id === id);
+      return i < 0 ? null : s.subscriptions.splice(i,1)[0];
+    }, D.SUB);
+    View.settings();
+    if (snap) Toast.undo(snap.name + " を削除しました", () => {
+      Store.commit(s => s.subscriptions.push(snap), D.SUB); View.settings();
+    });
+  },
+
+  /* 用途 */
+  "cat:new"(){
+    const name = prompt("追加する用途の名前");
+    if (!name || !name.trim()) return;
+    Store.commit(s => s.categories.push({
+      id:uid("cat"), name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
+      order: s.categories.filter(c => !c.system).length, archived:false, system:false, fixed:false,
+    }), D.CAT);
+    View.settings();
+  },
+  "cat:rename"({id}){
+    const c = Sel.cat(id);
+    const name = prompt("用途の名前", c.name);
+    if (!name || !name.trim()) return;
+    Store.commit(s => { const x = byId(s.categories, id); if (x) x.name = name.trim(); }, D.CAT);
+    View.settings();
+  },
+  "cat:up"({id}){
+    const list = Sel.activeCategories();
+    const i = list.findIndex(c => c.id === id);
+    if (i <= 0) return;
+    const a = list[i], b = list[i-1];
+    Store.commit(s => {
+      const x = byId(s.categories, a.id), y = byId(s.categories, b.id);
+      const t = x.order; x.order = y.order; y.order = t;
+    }, D.CAT);
+    View.settings();
+  },
+  "cat:archive"({id}){
+    const c = Sel.cat(id);
+    if (c.system) return;
+    Store.commit(s => { const x = byId(s.categories, id); if (x) x.archived = true; }, D.CAT);
+    View.settings();
+    Toast.undo(c.name + " を外しました（過去の記録は残ります）", () => {
+      Store.commit(s => { const x = byId(s.categories, id); if (x) x.archived = false; }, D.CAT);
+      View.settings();
+    });
+  },
 
   /* --- 履歴 --- */
   "hist:month"({d}){
@@ -2429,10 +3073,92 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S11 支払予定・サブスクの状態 ---------------- */
+  function s11(){
+    g("S11 支払予定");
+    const s = seedState();
+    const acc = { id:"acc1", name:"口座A", balance:null, balanceAsOf:null, order:0, archived:false };
+    s.accounts.push(acc);
+    // 15日締め・翌月10日払い
+    const card = s.methods.find(m => m.kind === "card");
+    card.billing = { accountId:acc.id, closeType:"毎月指定日", closeDay:15, payOffset:1,
+                     payDayType:"date", payDay:10, holidayAdjust:"調整なし" };
+    const cash = s.methods.find(m => m.kind === "cash");
+    const cat = s.categories[0].id;
+    const now = new Date();
+    const mk = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+    s.transactions.push(
+      // 締め日の前後で請求サイクルが分かれること
+      { id:"p1", date:mk+"-10", amount:1000, type:"expense", incomeKind:null, categoryId:cat, methodId:card.id, detail:"締め前" },
+      { id:"p2", date:mk+"-20", amount:2000, type:"expense", incomeKind:null, categoryId:cat, methodId:card.id, detail:"締め後" },
+      // 立替精算はその請求から差し引かれる
+      { id:"p3", date:mk+"-11", amount:300,  type:"income",  incomeKind:"refund", categoryId:cat, methodId:card.id, detail:"返金" },
+      // 別の支払方法のものは混ざらない
+      { id:"p4", date:mk+"-12", amount:9999, type:"expense", incomeKind:null, categoryId:cat, methodId:cash.id, detail:"現金" }
+    );
+    withState(s, () => {
+      const sc = Sel.cardSchedule(card.id);
+      ok("カードの予定が返る", !!sc);
+      eq("引落口座が紐づく", sc.account && sc.account.name, "口座A");
+
+      const [y,m] = mk.split("-").map(Number);
+      const [ny,nm] = addMonths(y,m,1);
+      const g1 = sc.groups.find(x => x.payDate === monthKeyOf(ny,nm) + "-10");
+      const [n2y,n2m] = addMonths(y,m,2);
+      const g2 = sc.groups.find(x => x.payDate === monthKeyOf(n2y,n2m) + "-10");
+
+      ok("締め日前の分は翌月10日払い", !!g1);
+      ok("締め日後の分は翌々月10日払い", !!g2);
+      eq("翌月分は返金が差し引かれる", g1 && g1.total, 1000 - 300);
+      eq("翌々月分", g2 && g2.total, 2000);
+      ok("別の支払方法は混ざらない",
+         sc.groups.every(x => x.items.every(it => it.methodId === card.id)));
+      ok("グループは支払日の昇順",
+         sc.groups.every((x,i,a) => i === 0 || a[i-1].payDate <= x.payDate));
+      eq("カードでない支払方法は予定なし", Sel.cardSchedule(cash.id), null);
+    });
+
+    // 休日調整のフラグが立つこと
+    const h = seedState();
+    const hc = h.methods.find(m => m.kind === "card");
+    hc.billing = { accountId:null, closeType:"毎月指定日", closeDay:15, payOffset:1,
+                   payDayType:"date", payDay:10, holidayAdjust:"翌営業日" };
+    h.holidays = { "2026-08-10":{name:"テスト祝日",source:"manual"} };
+    withState(h, () => {
+      const r = Sel.scheduleFor(hc.id, "2026-07-10");
+      eq("本来の支払日", fmt(r.rawPayDate), "2026-08-10");
+      ok("祝日なのでずれる", r.adjusted);
+      ok("ずれた先は営業日", Sel.isBusinessDay(r.payDate));
+    });
+
+    g("S11b サブスクの4状態と月次換算");
+    withState(seedState(), () => {
+      const base = { id:"s", name:"x", amount:1200, methodId:null, categoryId:CAT_SUB,
+                     start:"2026-01-01", end:null, status:"有効", pauseFrom:null, pauseTo:null };
+      eq("月次はそのまま",       Math.round(Sel.monthlyEquivalent(Object.assign({}, base, {interval:"月次"}))), 1200);
+      eq("週次は52/12倍",        Math.round(Sel.monthlyEquivalent(Object.assign({}, base, {interval:"週次"}))), Math.round(1200*52/12));
+      eq("年次は12分の1",        Math.round(Sel.monthlyEquivalent(Object.assign({}, base, {interval:"年次"}))), 100);
+      eq("停止は0",              Sel.monthlyEquivalent(Object.assign({}, base, {interval:"月次", status:"停止"})), 0);
+      // v1は月次だけを単純合計していたので、週次・年次が合計から漏れていた
+      ok("週次が合計から漏れない", Sel.monthlyEquivalent(Object.assign({}, base, {interval:"週次"})) > 0);
+    });
+
+    g("S11c 締め日設定の説明文");
+    eq("15日締め・翌月27日払い",
+       Sel.billingText({closeType:"毎月指定日", closeDay:15, payOffset:1, payDayType:"date", payDay:27}),
+       "15日締め ／ 翌月27日払い");
+    eq("月末締め・翌々月末日払い",
+       Sel.billingText({closeType:"月末", payOffset:2, payDayType:"末日"}),
+       "月末締め ／ 翌々月末日払い");
+    eq("当月払い",
+       Sel.billingText({closeType:"毎月指定日", closeDay:5, payOffset:0, payDayType:"date", payDay:25}),
+       "5日締め ／ 当月25日払い");
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -2549,6 +3275,10 @@ document.addEventListener("input", e => {
 /* 予算欄は blur（change）で確定させる。入力中に再描画すると
    カーソルが飛ぶので、ビュー側も deferIfFocused で守っている。 */
 document.addEventListener("change", e => {
+  // 締め日/支払日の種類を変えると入力欄の構成が変わるので組み替える
+  if (e.target.id === "mf-closetype" || e.target.id === "mf-paydaytype"){
+    MethodForm.read(); View.methodForm(); return;
+  }
   const catId = e.target.dataset && e.target.dataset.budgetCat;
   if (!catId) return;
   const mk = statusMonth();
