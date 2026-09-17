@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="家計簿">
+  <title>家計簿</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B2447"/>
+      <stop offset="1" stop-color="#1057C8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- maskable 用に全面を塗る。中身は中央の安全圏（半径 40%）に収めてある -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- 円 -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M168 148 L256 258"/>
+    <path d="M344 148 L256 258"/>
+    <path d="M256 258 L256 368"/>
+    <path d="M186 288 L326 288"/>
+    <path d="M186 330 L326 330"/>
+  </g>
+</svg>
