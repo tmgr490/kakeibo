@@ -1019,6 +1019,9 @@ function validate(input){
   S.subscriptions.forEach(x => {
     if (!SUB_STATUS.includes(x.status)) x.status = "停止";
     if (x.entryType !== "transfer") x.entryType = "expense";
+    // 状態と合わない日付が残っていると、画面に出ないまま発生が止まる
+    if (x.status !== "解約予定") x.end = null;
+    if (x.status !== "一時停止"){ x.pauseFrom = null; x.pauseTo = null; }
     const c = byId(S.categories, x.categoryId);
     // 貯蓄の定期は預け先を、支出の定期は用途を指していること
     if (x.entryType === "transfer" && (!c || c.kind !== "saving")) x.categoryId = CAT_SAVING;
@@ -1340,11 +1343,25 @@ Sel.catColor = id => slotVar(Sel.cat(id).colorSlot);
 
 /** ドーナツ用の内訳。円は一目で割合を見るためのものなので分割は6つまで。
  *  それを超えた分は「その他」に畳む（色を増やして見分けられなくしない）。 */
+/** その月に関係する用途。アーカイブ済みでも、その月に記録があるものは含める。
+ *  含めないと「支出の合計には乗っているのに内訳のどこにも出ない用途」ができて、
+ *  ヘッダの支出とドーナツの合計が食い違う（一度直した不具合と同じ種類）。 */
+Sel.categoriesInMonth = memo(function(monthKey){
+  const { totals } = Sel.monthTotals(monthKey);
+  const active = Sel.activeCategories();
+  const seen = new Set(active.map(c => c.id));
+  const extra = Object.keys(totals)
+    .filter(id => !seen.has(id) && (totals[id] || 0) !== 0)
+    .map(id => Sel.cat(id));
+  return active.concat(extra);
+});
+
 const DONUT_MAX = 6;
 Sel.breakdown = memo(function(monthKey){
   const { totals, expense } = Sel.monthTotals(monthKey);
-  const all = Sel.activeCategories()
-    .map(c => ({ id:c.id, name:c.name, icon:c.icon, colorSlot:c.colorSlot, value:totals[c.id] || 0 }))
+  const all = Sel.categoriesInMonth(monthKey)
+    .map(c => ({ id:c.id, name:c.name, icon:c.icon, colorSlot:c.colorSlot,
+                 archived:!!c.archived, value:totals[c.id] || 0 }))
     .filter(r => r.value !== 0)
     .sort((a,b) => b.value - a.value);
 
@@ -1384,7 +1401,7 @@ Sel.trend = memo(function(monthKey, n){
 Sel.pace = memo(function(monthKey){
   const { totals, expense } = Sel.monthTotals(monthKey);
   let budget = 0;
-  Sel.activeCategories().forEach(c => { budget += Sel.budgetOf(monthKey, c.id); });
+  Sel.categoriesInMonth(monthKey).forEach(c => { budget += Sel.budgetOf(monthKey, c.id); });
 
   const [y,m] = monthKey.split("-").map(Number);
   const days = monthEndDay(y,m);
@@ -1862,11 +1879,16 @@ const SubForm = {
     if (!amount){ Toast.show("金額を入力してください", {kind:"err"}); return; }
     if (!this.start){ Toast.show("開始日を入力してください", {kind:"err"}); return; }
     if (this.status === "解約予定" && !this.end){ Toast.show("解約予定は「いつまで」を入れてください", {kind:"err"}); return; }
+    // 状態に合わない日付は持ち越さない。「解約予定」で終了日を入れたあと
+    // 「有効」に戻すと、画面に出ていない終了日で黙って発生が止まってしまうため
     const payload = {
       name:this.name.trim(), amount, methodId:this.methodId, categoryId:this.categoryId,
       entryType:this.entryType,
-      interval:this.interval, start:this.start, end:this.end || null, status:this.status,
-      pauseFrom:this.pauseFrom || null, pauseTo:this.pauseTo || null, memo:this.memo || "",
+      interval:this.interval, start:this.start, status:this.status,
+      end: this.status === "解約予定" ? (this.end || null) : null,
+      pauseFrom: this.status === "一時停止" ? (this.pauseFrom || null) : null,
+      pauseTo:   this.status === "一時停止" ? (this.pauseTo   || null) : null,
+      memo:this.memo || "",
     };
     if (this.id){
       const id = this.id;
@@ -2058,7 +2080,7 @@ View._breakdown = function(mk){
               : slices.map(s => html`
                   <button class="legend-row" data-act="status:drill" data-id="${s.id}">
                     <span class="sw" style="background:${raw(slotVar(s.colorSlot))}"></span>
-                    <span class="nm">${(s.icon ? s.icon+" " : "") + s.name}</span>
+                    <span class="nm">${(s.icon ? s.icon+" " : "") + s.name}${s.archived ? html`<span class="tag gray">削除済み</span>` : ""}</span>
                     <span class="pc">${Math.round(s.value/total*100)}%</span>
                     <span class="vl">${yen(s.value)}</span>
                   </button>`)}
@@ -2110,7 +2132,7 @@ View._breakdown = function(mk){
 
 View._budget = function(mk){
   const { totals } = Sel.monthTotals(mk);
-  const cats = Sel.activeCategories().filter(c => c.id !== CAT_UNCAT || (totals[CAT_UNCAT]||0) !== 0);
+  const cats = Sel.categoriesInMonth(mk).filter(c => c.id !== CAT_UNCAT || (totals[CAT_UNCAT]||0) !== 0);
   let bTotal = 0, sTotal = 0;
 
   const rows = cats.map(c => {
@@ -2127,7 +2149,7 @@ View._budget = function(mk){
       <div class="bud-row">
         <div class="bud-top">
           <span class="sw" style="background:${raw(slotVar(c.colorSlot))}"></span>
-          <span class="nm">${(c.icon ? c.icon+" " : "") + c.name}</span>
+          <span class="nm">${(c.icon ? c.icon+" " : "") + c.name}${c.archived ? html`<span class="tag gray">削除済み</span>` : ""}</span>
           <input type="number" inputmode="numeric" min="0" placeholder="予算" value="${budget || ""}"
                  data-budget-cat="${c.id}" aria-label="${c.name}の予算">
         </div>
@@ -2992,7 +3014,8 @@ const Actions = {
   "entry:save"(){
     syncEntryInputs();
     const amount = Entry.value();
-    if (!amount || amount <= 0){ Toast.show("金額を入力してください", {kind:"err"}); return; }
+    if (amount < 0){ Toast.show("金額がマイナスです。計算し直してください", {kind:"err"}); return; }
+    if (!amount){ Toast.show("金額を入力してください", {kind:"err"}); return; }
     if (!Entry.categoryId || !Entry.methodId){ Toast.show("用途と支払方法を選んでください", {kind:"err"}); return; }
     const payload = {
       date: Entry.date, amount, type: Entry.type,
@@ -3028,6 +3051,7 @@ const Actions = {
   "cat:quickadd"(){
     const name = prompt("追加する用途の名前");
     if (!name || !name.trim()) return;
+    if (dupCategory(name.trim())){ Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return; }
     const id = uid("cat");
     Store.commit(s => s.categories.push({
       id, name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
@@ -3039,6 +3063,9 @@ const Actions = {
   "mth:quickadd"(){
     const name = prompt("追加する支払方法の名前");
     if (!name || !name.trim()) return;
+    if (Store.state.methods.some(m => !m.archived && m.name === name.trim())){
+      Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return;
+    }
     const id = uid("mth");
     Store.commit(s => s.methods.push({
       id, name:name.trim(), kind:"cash", order:s.methods.length, archived:false, billing:null,
@@ -3087,7 +3114,13 @@ const Actions = {
     const m = byId(Store.state.methods, id); if (!m) return;
     const used = Store.state.transactions.some(t => t.methodId === id)
               || Store.state.subscriptions.some(x => x.methodId === id);
-    if (used && !confirm(m.name + " には記録が紐づいています。入力候補から外しますか？（過去の記録は残ります）")) return;
+    // まだ引き落としが残っているカードを外すと、支払予定から黙って消える
+    const sc = m.billing ? Sel.cardSchedule(id) : null;
+    const upcoming = sc ? sc.upcoming.length : 0;
+    const msg = upcoming
+      ? m.name + " には、これから引き落とされる予定が " + upcoming + " 件あります。\n外すと支払予定に表示されなくなります。よろしいですか？（過去の記録は残ります）"
+      : m.name + " には記録が紐づいています。入力候補から外しますか？（過去の記録は残ります）";
+    if ((used || upcoming) && !confirm(msg)) return;
     const prev = { archived:m.archived };
     Store.commit(s => { byId(s.methods, id).archived = true; }, D.METHOD);
     View.settings();
@@ -3167,6 +3200,7 @@ const Actions = {
   "cat:new"(){
     const name = prompt("追加する用途の名前");
     if (!name || !name.trim()) return;
+    if (dupCategory(name.trim())){ Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return; }
     Store.commit(s => s.categories.push({
       id:uid("cat"), name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
       order: s.categories.filter(c => !c.system).length, archived:false, system:false, kind:SettingsUI.catKind || "expense",
@@ -3177,6 +3211,7 @@ const Actions = {
     const c = Sel.cat(id);
     const name = prompt("用途の名前", c.name);
     if (!name || !name.trim()) return;
+    if (dupCategory(name.trim(), id)){ Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return; }
     Store.commit(s => { const x = byId(s.categories, id); if (x) x.name = name.trim(); }, D.CAT);
     View.settings();
   },
@@ -3306,7 +3341,10 @@ const Actions = {
     const rows = Store.state.transactions.slice().sort((a,b) => a.date < b.date ? -1 : 1);
     const head = ["日付","種別","金額","用途","支払方法","メモ"];
     const esc = v => {
-      const s = String(v ?? "");
+      let s = String(v ?? "");
+      // = + - @ で始まる値は Excel が数式として実行してしまう。
+      // 先頭に ' を足して、ただの文字列として開かせる
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
       return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
     };
     const body = rows.map(t => [
@@ -3382,6 +3420,13 @@ function copyBudget(kind){
     }, D.BUDGET);
     View.status();
   });
+}
+
+/** 同じ名前の用途がすでにあるか。用途は名前で見分けるものなので、
+ *  同名が並ぶと内訳を見ても区別がつかなくなる。 */
+function dupCategory(name, exceptId){
+  return Store.state.categories.some(c =>
+    !c.archived && c.id !== exceptId && c.name === name);
 }
 
 function syncEntryInputs(){
@@ -4388,10 +4433,85 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S15 精査で見つかった不具合の回帰テスト ---------------- */
+  function s15(){
+    g("S15 削除した用途に記録が残っている月");
+    const s = seedState();
+    const a = s.categories[0].id, b = s.categories[1].id, m0 = s.methods[0].id;
+    s.transactions.push(
+      { id:"k1", date:"2026-05-02", amount:5000, type:"expense", incomeKind:null, categoryId:a, methodId:m0, detail:"" },
+      { id:"k2", date:"2026-05-03", amount:3000, type:"expense", incomeKind:null, categoryId:b, methodId:m0, detail:"" });
+    s.budgets["2026-05"] = { [a]:10000, [b]:8000 };
+    s.categories.find(c => c.id === b).archived = true;   // 使ったあとに削除した
+    withState(s, () => {
+      const t = Sel.monthTotals("2026-05"), bd = Sel.breakdown("2026-05"), pc = Sel.pace("2026-05");
+      // ★ 支出に乗っているのに内訳のどこにも出ない、が起きないこと
+      eq("ヘッダの支出とドーナツ合計が一致", bd.total, t.expense);
+      eq("Σスライス == 支出",                bd.slices.reduce((x,y)=>x+y.value,0), t.expense);
+      eq("削除済みの用途も内訳に出る",       bd.rows.length, 2);
+      ok("削除済みと分かる印が付く",         bd.rows.some(r => r.archived));
+      // 予算も同じ集合で数える
+      eq("予算合計に削除済みのぶんも入る",   pc.budget, 18000);
+      eq("残りが計算できる",                 pc.remain, 18000 - 8000);
+    });
+
+    g("S15b 状態に合わない日付を持ち越さない");
+    // 「解約予定」で終了日を入れたあと「有効」に戻したデータ
+    const sub = seedState();
+    sub.subscriptions.push({ id:"z", name:"定期", amount:1000, methodId:sub.methods[0].id,
+      categoryId:CAT_SUB, entryType:"expense", interval:"月次", start:"2026-01-10",
+      end:"2026-03-31", status:"有効", pauseFrom:"2026-02-01", pauseTo:"2026-02-28", memo:"" });
+    const fixed = validate(sub).state;
+    eq("有効なら終了日は消える",   fixed.subscriptions[0].end, null);
+    eq("有効なら停止期間も消える", fixed.subscriptions[0].pauseFrom, null);
+    withState(fixed, () => {
+      // 直す前は 0 になっていた（画面に出ない終了日で黙って止まっていた）
+      eq("終了日に邪魔されず発生する", Sel.monthTotals("2026-05").expense, 1000);
+    });
+    // 解約予定なら終了日は残る
+    const cancel = seedState();
+    cancel.subscriptions.push({ id:"c", name:"定期", amount:1000, methodId:cancel.methods[0].id,
+      categoryId:CAT_SUB, entryType:"expense", interval:"月次", start:"2026-01-10",
+      end:"2026-03-31", status:"解約予定", pauseFrom:null, pauseTo:null, memo:"" });
+    const cf = validate(cancel).state;
+    eq("解約予定なら終了日は残る", cf.subscriptions[0].end, "2026-03-31");
+    withState(cf, () => {
+      eq("終了日より後は発生しない", Sel.monthTotals("2026-05").expense, 0);
+      eq("終了日より前は発生する",   Sel.monthTotals("2026-02").expense, 1000);
+    });
+
+    g("S15c CSVで数式として実行されない");
+    // Excel は = + - @ で始まる値を数式として扱う
+    const esc = v => {
+      let t = String(v ?? "");
+      if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+      return /[",\n]/.test(t) ? '"' + t.replace(/"/g,'""') + '"' : t;
+    };
+    eq("= で始まる値は無害化",  esc("=1+1"), "'=1+1");
+    eq("+ で始まる値は無害化",  esc("+SUM(A1)"), "'+SUM(A1)");
+    eq("- で始まる値は無害化",  esc("-2+3"), "'-2+3");
+    eq("@ で始まる値は無害化",  esc("@SUM"), "'@SUM");
+    eq("普通の文字はそのまま",  esc("セブン"), "セブン");
+    eq("カンマは引用符で囲む",  esc("a,b"), '"a,b"');
+    eq("引用符は二重にする",    esc('a"b'), '"a""b"');
+
+    g("S15d 同じ名前の用途を作らせない");
+    withState(seedState(), () => {
+      const first = Sel.activeCategories()[0];
+      ok("既存と同じ名前は弾く",       dupCategory(first.name));
+      ok("自分自身は重複としない",     !dupCategory(first.name, first.id));
+      ok("新しい名前は通る",           !dupCategory("まだない用途"));
+      // 削除済みの名前は再利用できる
+      const s2 = seedState();
+      s2.categories[0].archived = true;
+      withState(s2, () => ok("削除済みと同じ名前は使える", !dupCategory(s2.categories[0].name)));
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -4707,7 +4827,7 @@ if (new URLSearchParams(location.search).get("selftest") === "1"){
   }
 }
 
-window.KB = { Store, Sel, Actions, Test, migrate, validate, looksLikeKakeibo, seedState, buildAnalysisText, version: APP_VERSION };
+window.KB = { Store, Sel, Actions, Test, migrate, validate, looksLikeKakeibo, seedState, buildAnalysisText, dupCategory, version: APP_VERSION };
 
 })();
 </script>
