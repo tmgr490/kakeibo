@@ -43,6 +43,14 @@ try{
     --tap:44px;
     --bar-h:58px;
     --safe-b: env(safe-area-inset-bottom, 0px);
+    --rail-w:216px;
+
+    /* グラフ用の系列色。8スロット固定で、順番に意味がある（隣り合う色が
+       色覚特性でも見分けられる並びとして検証済み。勝手に並べ替えないこと）。
+       9個目は作らず「その他」にまとめる。 */
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+    --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+    --grid:#E8ECE8;            /* 目盛りは面から1段だけずらす */
   }
   /* ダークは単純反転にしない: 影は情報を持たないのでヘアラインに、
      ゴールドは彩度を落とし、背景は純黒でなく緑みの暗色にして面を浮かせる */
@@ -58,6 +66,10 @@ try{
       --shadow-sm: 0 0 0 1px rgba(255,255,255,.04);
       --shadow:    0 0 0 1px rgba(255,255,255,.05);
       --shadow-lg: 0 12px 32px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
+      /* ダークは反転ではなく、暗い面用に選び直した同じ8色 */
+      --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+      --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+      --grid:#2A322D;
     }
   }
   :root[data-theme="dark"]{
@@ -71,6 +83,9 @@ try{
     --shadow-sm: 0 0 0 1px rgba(255,255,255,.04);
     --shadow:    0 0 0 1px rgba(255,255,255,.05);
     --shadow-lg: 0 12px 32px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.06);
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --grid:#2A322D;
   }
 }
 
@@ -152,6 +167,51 @@ try{
     transition:transform .14s var(--ease-spring);
   }
   nav.tabbar .fab:active{ transform:translate(-50%,-58%) scale(.9); }
+
+  /* ===== PC（900px以上）: 下部タブを左サイドバーに、本文は2カラムに ===== */
+  @media (min-width: 900px){
+    body{ padding-bottom:0; padding-left:var(--rail-w); }
+    header.appbar{ padding-left:calc(var(--rail-w) + 20px); }
+
+    nav.tabbar{
+      top:0; bottom:0; right:auto; width:var(--rail-w); height:100dvh;
+      display:flex; flex-direction:column; align-items:stretch; gap:4px;
+      padding:calc(env(safe-area-inset-top,0px) + 74px) 12px 16px;
+      border-top:0; border-right:1px solid var(--line);
+      background:var(--surface);
+    }
+    nav.tabbar button{
+      flex-direction:row; justify-content:flex-start; gap:11px;
+      padding:0 14px; height:44px; border-radius:11px; font-size:13.5px;
+    }
+    nav.tabbar button .ic{ font-size:17px; }
+    nav.tabbar button:hover{ background:var(--surface-2); }
+    nav.tabbar button[aria-current="page"]{ background:var(--teal-soft); color:var(--teal); }
+    /* FABはサイドバー先頭の通常ボタンに変える */
+    nav.tabbar .fab-slot{ order:-1; height:48px; margin-bottom:6px; }
+    nav.tabbar .fab{
+      position:static; transform:none; width:100%; height:48px;
+      border-radius:13px; font-size:15px; font-weight:800; gap:8px;
+      box-shadow:var(--shadow-sm);
+    }
+    nav.tabbar .fab::after{ content:"記録する"; font-size:14px; }
+    nav.tabbar .fab:active{ transform:scale(.98); }
+
+    main{ max-width:1040px; padding:18px 24px 40px; }
+    /* 2カラムにできる画面は横に並べる */
+    .cols{ display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start; }
+    .cols > .span2{ grid-column:1 / -1; }
+    .donut-wrap{ flex-direction:row; align-items:center; gap:24px; }
+    .donut{ width:220px; height:220px; }
+    #toasts{ bottom:20px; left:calc(50% + var(--rail-w)/2); }
+    dialog.sheet{ margin:auto; border-radius:20px; max-height:88dvh; }
+    dialog.sheet .sheet-in{ padding-bottom:18px; }
+  }
+  /* 大画面では3カラムまで */
+  @media (min-width: 1280px){
+    main{ max-width:1240px; }
+    .cols.c3{ grid-template-columns:repeat(3,1fr); }
+  }
 }
 
 /* ===================================================================
@@ -327,6 +387,70 @@ try{
   .month-switch button:active{ transform:scale(.9); }
   .month-switch .label{ font-size:16px; font-weight:800; color:var(--teal); min-width:120px; text-align:center; }
 
+  /* --- グラフ --- */
+  .chart{ width:100%; display:block; overflow:visible; }
+  .chart .grid-line{ stroke:var(--grid); stroke-width:1; shape-rendering:crispEdges; }
+  .chart .axis-txt{ fill:var(--ink-faint); font-size:10px; font-variant-numeric:tabular-nums; }
+  .chart .bar{ transition:opacity .15s var(--ease-out); }
+  .chart .hit{ fill:transparent; cursor:pointer; }
+  .chart .hit:hover + .bargroup .bar, .chart .bargroup:hover .bar{ opacity:.78; }
+
+  .donut-wrap{ display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .donut{ width:min(66vw,230px); height:min(66vw,230px); flex:0 0 auto; }
+  .donut .seg{ cursor:pointer; transition:opacity .15s var(--ease-out); }
+  .donut .seg:hover{ opacity:.75; }
+  .donut-center .k{ fill:var(--ink-soft); font-size:7px; font-weight:700; }
+  .donut-center .v{ fill:var(--ink); font-size:11px; font-weight:800; }
+
+  /* 凡例は内訳表を兼ねる（薄い色の判別を色だけに頼らせない） */
+  .legend{ width:100%; display:flex; flex-direction:column; }
+  .legend-row{
+    display:flex; align-items:center; gap:10px; padding:9px 2px;
+    border-bottom:1px solid var(--line); font-size:13px; width:100%;
+    background:transparent; border-left:0; border-right:0; border-top:0; cursor:pointer; color:inherit; text-align:left;
+  }
+  .legend-row:last-child{ border-bottom:none; }
+  .legend-row:active{ background:var(--surface-2); }
+  .legend-row .sw{ width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+  .legend-row .nm{ flex:1; min-width:0; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .legend-row .pc{ color:var(--ink-faint); font-size:11.5px; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .legend-row .vl{ font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; min-width:78px; text-align:right; }
+
+  /* 系列キー（棒グラフの凡例） */
+  .keys{ display:flex; gap:14px; flex-wrap:wrap; margin-bottom:8px; }
+  .keys span{ display:inline-flex; align-items:center; gap:6px; font-size:11.5px; color:var(--ink-soft); font-weight:700; }
+  .keys i{ width:10px; height:10px; border-radius:3px; display:inline-block; }
+
+  /* 予算メーター: 未消化部分は同系の薄い段。状態は塗りが持つ */
+  .gauge-track{ height:8px; border-radius:5px; background:var(--teal-soft); overflow:hidden; }
+  .gauge-fill{ height:100%; border-radius:5px 0 0 5px; background:var(--teal); transition:width .32s var(--ease-spring); }
+  .gauge-fill.warn{ background:var(--gold); }
+  .gauge-fill.over{ background:var(--red); }
+  .bud-row{ padding:12px 0; border-bottom:1px solid var(--line); }
+  .bud-row:last-child{ border-bottom:none; }
+  .bud-top{ display:flex; align-items:center; gap:9px; margin-bottom:7px; }
+  .bud-top .sw{ width:9px; height:22px; border-radius:4px; flex:0 0 auto; }
+  .bud-top .nm{ flex:1; min-width:0; font-size:13px; font-weight:700; }
+  .bud-top input{ width:96px; padding:6px 8px; font-size:12.5px; text-align:right; border-radius:8px; }
+  .bud-bot{ display:flex; justify-content:space-between; font-size:11.5px; margin-top:5px; font-variant-numeric:tabular-nums; }
+  .bud-bot .rem.ok{ color:var(--teal); font-weight:700; }
+  .bud-bot .rem.warn{ color:var(--gold); font-weight:700; }
+  .bud-bot .rem.over{ color:var(--red); font-weight:700; }
+  .bud-bot .rem.none{ color:var(--ink-faint); }
+
+  .pace{ display:flex; gap:8px; }
+  .pace > div{ flex:1; background:var(--surface-2); border-radius:12px; padding:11px; text-align:center; }
+  .pace .k{ font-size:10.5px; color:var(--ink-soft); font-weight:700; }
+  .pace .v{ font-size:16px; font-weight:800; margin-top:3px; }
+
+  .tip{
+    position:fixed; z-index:95; pointer-events:none; background:var(--ink); color:var(--paper);
+    border-radius:9px; padding:7px 10px; font-size:11.5px; font-weight:700; white-space:nowrap;
+    box-shadow:var(--shadow-lg); transform:translate(-50%,-120%); opacity:0; transition:opacity .12s;
+  }
+  .tip.on{ opacity:1; }
+  .tip .t2{ display:block; font-weight:500; opacity:.8; font-size:10.5px; margin-top:2px; }
+
   .soon{ text-align:center; padding:40px 18px; color:var(--ink-faint); }
   .soon .big{ font-size:40px; display:block; margin-bottom:10px; }
   .soon .ph{ font-size:13px; font-weight:700; color:var(--ink-soft); }
@@ -424,9 +548,12 @@ const INTERVALS       = ["月次","週次","年次"];
 const CAT_SUB   = "cat_subscription";
 const CAT_UNCAT = "cat_uncategorized";
 
-const PALETTE = ["#E0763A","#3E6FBF","#2E8B7A","#C7473F","#8A5FC2","#3FA34D",
-                 "#D6558B","#C79A3C","#3E9BA8","#B0562E","#6B7FD6","#4FB88A",
-                 "#A8763E","#6E6E76"];
+/* 系列色は8スロット。色はカテゴリに固定し、順位では決めない
+   （絞り込みで件数が変わっても残った色が塗り替わらないようにするため）。
+   9個目のスロットは作らず「その他」にまとめる。実際の色はCSS変数側にあり、
+   ライト/ダークで別々に検証済みの値が入る。 */
+const SERIES_N = 8;
+const slotVar  = n => "var(--s" + ((Number(n) || 0) % SERIES_N + 1) + ")";
 
 const SEED_CATEGORIES = [
   ["食費","🍚"],["日用品","🧴"],["交通費","🚃"],["交際費","🍻"],["趣味・娯楽","🎮"],
@@ -502,8 +629,8 @@ function emptyState(){
 
 function systemCategories(){
   return [
-    { id:CAT_SUB,   name:"サブスク・固定費", color:"#8A5FC2", icon:"🔁", order:900, archived:false, system:true,  fixed:true  },
-    { id:CAT_UNCAT, name:"未分類",           color:"#6E6E76", icon:"❓", order:999, archived:false, system:true,  fixed:false },
+    { id:CAT_SUB,   name:"サブスク・固定費", colorSlot:6, icon:"🔁", order:900, archived:false, system:true,  fixed:true  },
+    { id:CAT_UNCAT, name:"未分類",           colorSlot:5, icon:"❓", order:999, archived:false, system:true,  fixed:false },
   ];
 }
 
@@ -511,11 +638,11 @@ function systemCategories(){
 function seedState(){
   const s = emptyState();
   s.categories = SEED_CATEGORIES.map(([name,icon],i) => ({
-    id: uid("cat"), name, icon, color: PALETTE[i % PALETTE.length],
+    id: uid("cat"), name, icon, colorSlot: i % SERIES_N,
     order: i, archived:false, system:false, fixed:false,
   }));
   s.categories.push(...systemCategories());
-  s.categories.push({ id:uid("cat"), name:"その他", icon:"📦", color:PALETTE[13], order:890, archived:false, system:false, fixed:false });
+  s.categories.push({ id:uid("cat"), name:"その他", icon:"📦", colorSlot:7, order:890, archived:false, system:false, fixed:false });
   s.methods = SEED_METHODS.map(([name,kind],i) => ({
     id: uid("mth"), name, kind, order:i, archived:false, billing:null,
   }));
@@ -533,7 +660,7 @@ function v1_to_v2(v1){
   const catByName = new Map();
   (pd.categories || []).forEach((name, i) => {
     if (!name || catByName.has(name)) return;
-    const c = { id:uid("cat"), name, icon:"", color:PALETTE[i % PALETTE.length],
+    const c = { id:uid("cat"), name, icon:"", colorSlot: i % SERIES_N,
                 order:i, archived:false, system:false, fixed:false };
     s.categories.push(c); catByName.set(name, c); report.categories++;
   });
@@ -541,7 +668,7 @@ function v1_to_v2(v1){
   const ensureCat = name => {
     if (!name) return CAT_UNCAT;
     if (catByName.has(name)) return catByName.get(name).id;
-    const c = { id:uid("cat"), name, icon:"", color:PALETTE[s.categories.length % PALETTE.length],
+    const c = { id:uid("cat"), name, icon:"", colorSlot: s.categories.length % SERIES_N,
                 order:s.categories.length, archived:false, system:false, fixed:false };
     s.categories.push(c); catByName.set(name, c); report.created.push("用途:"+name);
     return c.id;
@@ -797,7 +924,7 @@ const Sel = {};
 
 /* --- 参照ヘルパ --- */
 Sel.cat = id => byId(Store.state.categories, id) ||
-                { id, name:"未分類", color:"#6E6E76", icon:"❓", order:999, archived:false, system:true };
+                { id, name:"未分類", colorSlot:5, icon:"❓", order:999, archived:false, system:true };
 Sel.mth = id => byId(Store.state.methods, id) ||
                 { id, name:"不明", kind:"cash", order:999, archived:false, billing:null };
 Sel.acc = id => byId(Store.state.accounts, id);
@@ -998,6 +1125,154 @@ Sel.gauge = function(spent, budget){
            level: ratio > 1 ? "over" : ratio >= 0.8 ? "warn" : "ok" };
 };
 
+Sel.catColor = id => slotVar(Sel.cat(id).colorSlot);
+
+/** ドーナツ用の内訳。円は一目で割合を見るためのものなので分割は6つまで。
+ *  それを超えた分は「その他」に畳む（色を増やして見分けられなくしない）。 */
+const DONUT_MAX = 6;
+Sel.breakdown = memo(function(monthKey){
+  const { totals, expense } = Sel.monthTotals(monthKey);
+  const all = Sel.activeCategories()
+    .map(c => ({ id:c.id, name:c.name, icon:c.icon, colorSlot:c.colorSlot, value:totals[c.id] || 0 }))
+    .filter(r => r.value !== 0)
+    .sort((a,b) => b.value - a.value);
+
+  // 用途は立替精算が使った額を上回るとマイナスになりうる。円は割合を見るものなので
+  // マイナスの扇は描けない。正の分だけで円を作り、中央の合計もその和にする
+  // （マイナス分は別に注記する）。こうしないと「スライスの和 ≠ 中央の数字」になる。
+  const rows = all.filter(r => r.value > 0);
+  const negatives = all.filter(r => r.value < 0);
+
+  let slices = rows;
+  if (rows.length > DONUT_MAX){
+    const head = rows.slice(0, DONUT_MAX - 1);
+    const rest = rows.slice(DONUT_MAX - 1);
+    slices = head.concat([{
+      id:"__other", name:"その他（" + rest.length + "件）", icon:"",
+      colorSlot:7, value: rest.reduce((a,r) => a + r.value, 0), rest,
+    }]);
+  }
+  const total = rows.reduce((a,r) => a + r.value, 0);
+  return { rows, negatives, slices, total, expense, all };
+});
+
+/** 直近nヶ月の支出・収入・収支。どれも同じ「円」なので軸は1本で足りる。 */
+Sel.trend = memo(function(monthKey, n){
+  const out = [];
+  const [y0,m0] = monthKey.split("-").map(Number);
+  for (let i = n - 1; i >= 0; i--){
+    const [y,m] = addMonths(y0, m0, -i);
+    const mk = monthKeyOf(y,m);
+    const t = Sel.monthTotals(mk);
+    out.push({ monthKey:mk, y, m, expense:t.expense, income:t.income, net:t.net });
+  }
+  return out;
+});
+
+/** 今月あと使えるお金と1日あたりのペース。 */
+Sel.pace = memo(function(monthKey){
+  const { totals, expense } = Sel.monthTotals(monthKey);
+  let budget = 0;
+  Sel.activeCategories().forEach(c => { budget += Sel.budgetOf(monthKey, c.id); });
+
+  const [y,m] = monthKey.split("-").map(Number);
+  const days = monthEndDay(y,m);
+  const now = new Date();
+  const isCurrent = now.getFullYear() === y && now.getMonth()+1 === m;
+  const elapsed = isCurrent ? now.getDate() : days;
+  const left = Math.max(0, days - elapsed);
+
+  return {
+    budget, expense, days, elapsed, left, isCurrent,
+    remain: budget > 0 ? budget - expense : null,
+    perDaySoFar: elapsed > 0 ? expense / elapsed : 0,
+    perDayLeft: (budget > 0 && left > 0) ? Math.max(0, budget - expense) / left : null,
+  };
+});
+
+/* ====================================================================
+   §8 CHART — インラインSVGの手書き。ライブラリは使わない。
+   ==================================================================== */
+const Chart = {};
+
+/** ドーナツ。1スライス=1要素なのでタップもVoiceOverも効く。 */
+Chart.donut = function(slices, total){
+  const R = 52, C = 2 * Math.PI * R, GAP = 2;   // 面の色で2pxあける（枠線は引かない）
+  if (!total || !slices.length){
+    return html`<svg class="donut" viewBox="0 0 120 120" role="img" aria-label="データなし">
+      <circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--line)" stroke-width="15"></circle>
+      <text class="v" x="60" y="62" text-anchor="middle" style="fill:var(--ink-faint);font-size:9px">記録なし</text></svg>`;
+  }
+  let acc = 0;
+  const arcs = slices.map(s => {
+    const frac = s.value / total;
+    const len  = Math.max(0, frac * C - GAP);
+    const el = html`<circle class="seg" cx="60" cy="60" r="${R}" fill="none"
+        stroke="${raw(slotVar(s.colorSlot))}" stroke-width="15"
+        stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}"
+        stroke-dashoffset="${(-acc * C).toFixed(2)}"
+        data-act="status:drill" data-id="${s.id}"
+      ><title>${s.name}：${yen(s.value)}（${Math.round(frac*100)}%）</title></circle>`;
+    acc += frac;
+    return el;
+  });
+  return html`<svg class="donut" viewBox="0 0 120 120" role="img"
+      aria-label="用途別の内訳。合計 ${yen(total)}">
+    <g transform="rotate(-90 60 60)">${arcs}</g>
+    <g class="donut-center" text-anchor="middle">
+      <text class="k" x="60" y="56">支出合計</text>
+      <text class="v" x="60" y="68">${yen(total)}</text>
+    </g>
+  </svg>`;
+};
+
+/** 支出と収入の推移。2系列なので凡例を必ず出し、直近だけ値を直接置く。 */
+Chart.trend = function(data){
+  const W = 680, H = 190, PL = 46, PR = 10, PT = 12, PB = 26;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const max = Math.max(1, ...data.map(d => Math.max(d.expense, d.income, 0)));
+  // 目盛りはきりのいい数字に丸める
+  const step = Math.pow(10, Math.floor(Math.log10(max))) / 2;
+  const top  = Math.ceil(max / step) * step;
+  const ticks = [0, top/2, top];
+  const y = v => PT + ih - (v / top) * ih;
+
+  const band = iw / data.length;
+  const bw   = Math.min(11, (band - 6) / 2);      // 棒は細く。24px上限より十分細い
+
+  const bars = data.map((d,i) => {
+    const cx = PL + band * i + band/2;
+    const x1 = cx - bw - 1, x2 = cx + 1;          // 隣り合う棒の間も2pxあける
+    const mk = (v0, x, cls) => {
+      // 立替精算が上回るとマイナスになりうる。棒は0で止め、実額はツールチップで出す
+      const v = Math.max(0, v0);
+      const h = v > 0 ? Math.max(1.5, (v / top) * ih) : 0;
+      if (!h) return "";
+      // 上端だけ角を丸め、ベースラインは角のまま
+      return html`<path class="bar" d="M${x.toFixed(1)} ${(PT+ih).toFixed(1)} L${x.toFixed(1)} ${(y(v)+3).toFixed(1)} Q${x.toFixed(1)} ${y(v).toFixed(1)} ${(x+3).toFixed(1)} ${y(v).toFixed(1)} L${(x+bw-3).toFixed(1)} ${y(v).toFixed(1)} Q${(x+bw).toFixed(1)} ${y(v).toFixed(1)} ${(x+bw).toFixed(1)} ${(y(v)+3).toFixed(1)} L${(x+bw).toFixed(1)} ${(PT+ih).toFixed(1)} Z" fill="${raw(cls)}"></path>`;
+    };
+    return html`<g class="bargroup">
+      ${mk(d.expense, x1, "var(--s2)")}
+      ${mk(d.income,  x2, "var(--s1)")}
+      <rect class="hit" x="${(PL+band*i).toFixed(1)}" y="${PT}" width="${band.toFixed(1)}" height="${ih}"
+        data-tip="${d.y}年${d.m}月　支出 ${yen(d.expense)}／収入 ${yen(d.income)}／収支 ${yen(d.net)}"></rect>
+    </g>`;
+  });
+
+  const last = data[data.length-1];
+  return html`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+      role="img" aria-label="直近${data.length}ヶ月の支出と収入の推移">
+    ${ticks.map(t => html`<line class="grid-line" x1="${PL}" x2="${W-PR}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}"></line>`)}
+    ${ticks.map(t => html`<text class="axis-txt" x="${PL-6}" y="${(y(t)+3).toFixed(1)}" text-anchor="end">${t>=10000 ? Math.round(t/10000)+"万" : Math.round(t).toLocaleString("ja-JP")}</text>`)}
+    ${bars}
+    ${data.map((d,i) => (data.length <= 12 || i % 2 === 0)
+      ? html`<text class="axis-txt" x="${(PL+band*i+band/2).toFixed(1)}" y="${H-8}" text-anchor="middle">${d.m}月</text>` : "")}
+    ${last && last.expense > 0
+      ? html`<text class="axis-txt" x="${(PL+band*(data.length-1)+band/2).toFixed(1)}" y="${(y(last.expense)-6).toFixed(1)}" text-anchor="middle" style="fill:var(--ink);font-weight:800">${yen(last.expense)}</text>`
+      : ""}
+  </svg>`;
+};
+
 /* ====================================================================
    §6 ROUTER
    ==================================================================== */
@@ -1165,7 +1440,7 @@ View.entrySheet = function(){
     <div style="margin-top:14px">
       <div class="note mb0" style="margin-bottom:4px">用途</div>
       <div class="chip-row">
-        ${cats.map(c => html`<button class="chip" data-act="entry:cat" data-id="${c.id}" aria-pressed="${String(c.id===Entry.categoryId)}"><span class="dot" style="background:${PALETTE.includes(c.color)?c.color:"#6E6E76"}"></span>${(c.icon?c.icon+" ":"")+c.name}</button>`)}
+        ${cats.map(c => html`<button class="chip" data-act="entry:cat" data-id="${c.id}" aria-pressed="${String(c.id===Entry.categoryId)}"><span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${(c.icon?c.icon+" ":"")+c.name}</button>`)}
         <button class="chip add" data-act="cat:quickadd">＋ 追加</button>
       </div>
 
@@ -1189,40 +1464,185 @@ View.entrySheet = function(){
   `);
 };
 
-/* --- 状況（Phase 2 で本実装） --- */
+/* --- 状況: 内訳 / 予算 / 推移 --- */
+const StatusUI = { month:null, tab:"breakdown" };
+function statusMonth(){
+  if (!StatusUI.month){ const n = new Date(); StatusUI.month = monthKeyOf(n.getFullYear(), n.getMonth()+1); }
+  return StatusUI.month;
+}
+
 View.status = function(){
   const host = $('[data-route="status"]');
-  const mk = monthKeyOf(new Date().getFullYear(), new Date().getMonth()+1);
+  const mk = statusMonth();
+  const [y,m] = mk.split("-").map(Number);
   const { expense, income, net } = Sel.monthTotals(mk);
-  const txCount = Store.state.transactions.length;
 
-  mount(host, html`
+  const head = html`
     <div class="panel">
-      <h2>今月の収支</h2>
-      <p class="note">${mk.replace("-","年")}月</p>
+      <div class="month-switch">
+        <button data-act="status:month" data-d="-1" aria-label="前の月">‹</button>
+        <div class="label num">${y}年${m}月</div>
+        <button data-act="status:month" data-d="1" aria-label="次の月">›</button>
+      </div>
       <div class="sum3">
-        <div><div class="k">支出</div><div class="v ex num">${yen(expense)}</div></div>
-        <div><div class="k">収入</div><div class="v in num">${yen(income)}</div></div>
-        <div><div class="k">差引</div><div class="v num" style="color:${net>=0?"var(--teal)":"var(--red)"}">${yen(net)}</div></div>
+        <div><div class="k">支出</div><div class="v ex">${yen(expense)}</div></div>
+        <div><div class="k">収入</div><div class="v in">${yen(income)}</div></div>
+        <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--teal)":"var(--red)"}">${yen(net)}</div></div>
       </div>
+      <div class="seg" role="group" aria-label="表示切替" style="margin-top:12px">
+        <button data-act="status:tab" data-v="breakdown" aria-pressed="${String(StatusUI.tab==="breakdown")}">内訳</button>
+        <button data-act="status:tab" data-v="budget"    aria-pressed="${String(StatusUI.tab==="budget")}">予算</button>
+        <button data-act="status:tab" data-v="trend"     aria-pressed="${String(StatusUI.tab==="trend")}">推移</button>
+      </div>
+    </div>`;
+
+  const body = StatusUI.tab === "budget" ? View._budget(mk)
+             : StatusUI.tab === "trend"  ? View._trend(mk)
+             : View._breakdown(mk);
+  mount(host, html`${head}${body}`);
+};
+
+View._breakdown = function(mk){
+  const { slices, rows, negatives, total, expense } = Sel.breakdown(mk);
+  const p = Sel.pace(mk);
+  return html`
+    <div class="cols">
+      <div class="panel">
+        <h2>用途別の内訳</h2>
+        <p class="note">サブスクの発生分も含めて集計しています。行をタップするとその用途だけの履歴を開きます。</p>
+        <div class="donut-wrap">
+          ${Chart.donut(slices, total)}
+          <div class="legend">
+            ${slices.length === 0
+              ? html`<div class="empty" style="padding:18px"><span class="big">🧾</span>この月の支出はまだありません。</div>`
+              : slices.map(s => html`
+                  <button class="legend-row" data-act="status:drill" data-id="${s.id}">
+                    <span class="sw" style="background:${raw(slotVar(s.colorSlot))}"></span>
+                    <span class="nm">${(s.icon ? s.icon+" " : "") + s.name}</span>
+                    <span class="pc">${Math.round(s.value/total*100)}%</span>
+                    <span class="vl">${yen(s.value)}</span>
+                  </button>`)}
+          </div>
+        </div>
+        ${negatives.length
+          ? html`<p class="note" style="margin:12px 0 0">
+              ${negatives.map(n => n.name).join("・")} は立替精算のほうが多く、合計が
+              ${negatives.map(n => yen(n.value)).join("・")} のマイナスです。
+              円グラフは割合を見るものなのでマイナスの分は描けません。
+              差し引いた実際の支出は ${yen(expense)} です。</p>`
+          : ""}
+      </div>
+
+      <div class="panel">
+        <h2>今月のペース</h2>
+        ${p.budget > 0
+          ? html`
+            <p class="note">予算 ${yen(p.budget)} に対して ${Math.round(p.expense/p.budget*100)}% を使っています。</p>
+            <div class="pace">
+              <div><div class="k">あと使えるお金</div>
+                   <div class="v" style="color:${p.remain>=0?"var(--teal)":"var(--red)"}">${yen(p.remain)}</div></div>
+              <div><div class="k">1日あたりの目安</div>
+                   <div class="v">${p.perDayLeft==null ? "—" : yen(p.perDayLeft)}</div></div>
+            </div>
+            <div class="pace" style="margin-top:8px">
+              <div><div class="k">これまでの1日平均</div><div class="v">${yen(p.perDaySoFar)}</div></div>
+              <div><div class="k">残り日数</div><div class="v">${p.isCurrent ? p.left+"日" : "—"}</div></div>
+            </div>`
+          : html`<p class="note mb0">予算を設定すると、「あと使えるお金」と「1日あたりの目安」が出ます。上の「予算」タブから設定できます。</p>`}
+        ${rows.length > slices.length
+          ? html`<p class="note" style="margin-top:12px">用途が ${rows.length} 件あるため、円グラフでは上位 ${DONUT_MAX-1} 件とその他にまとめています。全件は下の「予算」タブで確認できます。</p>`
+          : ""}
+      </div>
+    </div>`;
+};
+
+View._budget = function(mk){
+  const { totals } = Sel.monthTotals(mk);
+  const cats = Sel.activeCategories().filter(c => c.id !== CAT_UNCAT || (totals[CAT_UNCAT]||0) !== 0);
+  let bTotal = 0, sTotal = 0;
+
+  const rows = cats.map(c => {
+    const spent = totals[c.id] || 0;
+    const budget = Sel.budgetOf(mk, c.id);
+    bTotal += budget; sTotal += spent;
+    const g = Sel.gauge(spent, budget);
+    const rem = budget > 0
+      ? (spent > budget
+          ? html`<span class="rem over">${yen(spent-budget)} 超過</span>`
+          : html`<span class="rem ${g.level}">残り ${yen(budget-spent)}</span>`)
+      : html`<span class="rem none">予算未設定</span>`;
+    return html`
+      <div class="bud-row">
+        <div class="bud-top">
+          <span class="sw" style="background:${raw(slotVar(c.colorSlot))}"></span>
+          <span class="nm">${(c.icon ? c.icon+" " : "") + c.name}</span>
+          <input type="number" inputmode="numeric" min="0" placeholder="予算" value="${budget || ""}"
+                 data-budget-cat="${c.id}" aria-label="${c.name}の予算">
+        </div>
+        <div class="gauge-track"><div class="gauge-fill ${g.level}" style="width:${g.pct.toFixed(1)}%"></div></div>
+        <div class="bud-bot"><span class="muted">使用 ${yen(spent)}</span>${rem}</div>
+      </div>`;
+  });
+
+  return html`
+    <div class="panel">
+      <h2>用途別の予算</h2>
+      <p class="note">金額を入れると保存されます。翌月は前月の予算を引き継ぐので、変えたい用途だけ直せば大丈夫です。0 を入れた月は「0」として扱われ、前の月の金額には戻りません。</p>
+      ${rows}
+      <div class="total-box">
+        <div class="lbl">予算合計 ／ 使用</div>
+        <div class="val">${yen(bTotal)} ／ ${yen(sTotal)}</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn ghost small" data-act="budget:copyprev">先月の予算をコピー</button>
+        <button class="btn ghost small" data-act="budget:fromactual">先月の実績を予算にする</button>
+      </div>
+    </div>`;
+};
+
+View._trend = function(mk){
+  const data = Sel.trend(mk, 12);
+  const spent = data.map(d => d.expense).filter(v => v > 0);
+  const avg = spent.length ? spent.reduce((a,b)=>a+b,0) / spent.length : 0;
+  const cur = data[data.length-1], prev = data[data.length-2];
+  const diff = prev ? cur.expense - prev.expense : 0;
+
+  return html`
+    <div class="panel">
+      <h2>収支の推移</h2>
+      <p class="note">直近12ヶ月。棒をタップすると内訳が出ます。</p>
+      <div class="keys">
+        <span><i style="background:var(--s2)"></i>支出</span>
+        <span><i style="background:var(--s1)"></i>収入</span>
+      </div>
+      ${Chart.trend(data)}
     </div>
 
-    <div class="panel">
-      <div class="soon">
-        <span class="big">📊</span>
-        <div class="ph">用途別グラフ・予算ゲージ・収支推移</div>
-        <div class="ph2">Phase 2 で実装します。<br>ここに円グラフと直近12ヶ月の推移が入ります。</div>
+    <div class="cols">
+      <div class="panel">
+        <h2>先月との比較</h2>
+        ${prev
+          ? html`<div class="pace">
+              <div><div class="k">今月の支出</div><div class="v">${yen(cur.expense)}</div></div>
+              <div><div class="k">先月との差</div>
+                   <div class="v" style="color:${diff>0?"var(--red)":"var(--teal)"}">${diff>0?"+":""}${yen(diff)}</div></div>
+              <div><div class="k">12ヶ月平均</div><div class="v">${yen(avg)}</div></div>
+            </div>`
+          : html`<p class="note mb0">比較できる月がまだありません。</p>`}
       </div>
-    </div>
 
-    <div class="panel">
-      <h2>データの状況</h2>
-      <p class="note mb0">
-        記録 ${txCount}件 ／ 用途 ${Store.state.categories.length}件 ／ 支払方法 ${Store.state.methods.length}件<br>
-        ${Store.state.meta.migratedFrom === "v1" ? "旧バージョンのデータを引き継ぎ済みです。" : "新規データです。"}
-      </p>
-    </div>
-  `);
+      <div class="panel">
+        <h2>月ごとの一覧</h2>
+        <div class="legend">
+          ${data.slice().reverse().map(d => html`
+            <button class="legend-row" data-act="status:gomonth" data-mk="${d.monthKey}">
+              <span class="nm">${d.y}年${d.m}月</span>
+              <span class="pc">収入 ${yen(d.income)}</span>
+              <span class="vl">${yen(d.expense)}</span>
+            </button>`)}
+        </div>
+      </div>
+    </div>`;
 };
 
 /* --- 履歴 --- */
@@ -1282,7 +1702,7 @@ View.history = function(){
             <div class="rows">
               ${d.items.map(e => html`
                 <button class="row" data-act="${e.source==="tx" ? "tx:edit" : "noop"}" data-id="${e.id}">
-                  <span class="swatch" style="background:${Sel.cat(e.categoryId).color}"></span>
+                  <span class="swatch" style="background:${raw(Sel.catColor(e.categoryId))}"></span>
                   <span class="main">
                     <span class="l1">${e.label}${e.source==="sub" ? raw(' <span class="tag gray">サブスク</span>') : ""}</span>
                     <span class="l2">${Sel.cat(e.categoryId).name} ・ ${Sel.mth(e.methodId).name}${e.type==="income" ? (e.incomeKind==="earning" ? " ・ 収入" : " ・ 立替精算") : ""}</span>
@@ -1438,7 +1858,7 @@ const Actions = {
     if (!name || !name.trim()) return;
     const id = uid("cat");
     Store.commit(s => s.categories.push({
-      id, name:name.trim(), icon:"", color:PALETTE[s.categories.length % PALETTE.length],
+      id, name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
       order:s.categories.filter(c=>!c.system).length, archived:false, system:false, fixed:false,
     }), D.CAT);
     Entry.categoryId = id; View.entrySheet();
@@ -1452,6 +1872,28 @@ const Actions = {
     }), D.METHOD);
     Entry.methodId = id; View.entrySheet();
   },
+
+  /* --- 状況 --- */
+  "status:month"({d}){
+    const [y,m] = statusMonth().split("-").map(Number);
+    const [ny,nm] = addMonths(y, m, Number(d));
+    StatusUI.month = monthKeyOf(ny,nm);
+    View.status();
+  },
+  "status:tab"({v}){ StatusUI.tab = v; View.status(); },
+  "status:gomonth"({mk}){ StatusUI.month = mk; StatusUI.tab = "breakdown"; View.status(); },
+  /** 用途をタップ → その用途に絞った履歴へ */
+  "status:drill"({id}){
+    if (!id || id === "__other"){ StatusUI.tab = "budget"; View.status(); return; }
+    HistoryUI.month = statusMonth();
+    HistoryUI.categoryId = id;
+    HistoryUI.methodId = ""; HistoryUI.q = "";
+    View.history();
+    go("history");
+  },
+
+  "budget:copyprev"(){ copyBudget("budget"); },
+  "budget:fromactual"(){ copyBudget("actual"); },
 
   /* --- 履歴 --- */
   "hist:month"({d}){
@@ -1483,6 +1925,35 @@ const Actions = {
     }catch(e){ Toast.show("失敗しました", {kind:"err"}); }
   },
 };
+
+/** 先月の予算／実績を今月にコピーする。0も明示的な値として書き込む。 */
+function copyBudget(kind){
+  const mk = statusMonth();
+  const [y,m] = mk.split("-").map(Number);
+  const [py,pm] = addMonths(y, m, -1);
+  const prevKey = monthKeyOf(py,pm);
+  const prevTotals = Sel.monthTotals(prevKey).totals;
+  const cats = Sel.activeCategories();
+
+  const before = JSON.stringify(Store.state.budgets[mk] || null);
+  let n = 0;
+  Store.commit(s => {
+    const dst = s.budgets[mk] = Object.assign({}, s.budgets[mk]);
+    cats.forEach(c => {
+      const v = kind === "actual" ? Math.max(0, Math.round(prevTotals[c.id] || 0)) : Sel.budgetOf(prevKey, c.id);
+      if (v > 0){ dst[c.id] = v; n++; }
+    });
+  }, D.BUDGET);
+
+  if (!n){ Toast.show("先月に" + (kind === "actual" ? "実績" : "予算") + "がありませんでした", {kind:"err"}); return; }
+  View.status();
+  Toast.undo(n + "件の用途に反映しました", () => {
+    Store.commit(s => {
+      if (before === "null") delete s.budgets[mk]; else s.budgets[mk] = JSON.parse(before);
+    }, D.BUDGET);
+    View.status();
+  });
+}
 
 function syncEntryInputs(){
   const d = $("#entry-date"), t = $("#entry-detail");
@@ -1839,10 +2310,121 @@ const Test = (function(){
     eq("0 は消えない", toHTML(html`${0}`), "0");
   }
 
+  /* ---------------- S10 内訳・推移・ペース ---------------- */
+  function s10(){
+    g("S10 内訳・推移・ペース");
+    const s = seedState();
+    const cats = s.categories.filter(c => !c.system);
+    // 用途10件に金額を入れて、円グラフが6分割に畳まれることを確認する
+    cats.slice(0,10).forEach((c,i) => {
+      s.transactions.push({ id:"x"+i, date:"2026-05-10", amount:(10-i)*1000, type:"expense",
+        incomeKind:null, categoryId:c.id, methodId:s.methods[0].id, detail:"" });
+    });
+    withState(s, () => {
+      const b = Sel.breakdown("2026-05");
+      eq("内訳の行は全件そのまま", b.rows.length, 10);
+      eq("円グラフは6分割まで",   b.slices.length, 6);
+      eq("最後は「その他」",       b.slices[5].id, "__other");
+      // ★ 畳んでも合計は一致する（スライスの和 == 表示合計）
+      eq("Σスライス == 支出合計", b.slices.reduce((a,x)=>a+x.value,0), b.total);
+      eq("その他は残り5件の合計", b.slices[5].value,
+         b.rows.slice(5).reduce((a,x)=>a+x.value,0));
+      ok("スライスは降順", b.slices.slice(0,5).every((x,i,a) => i===0 || a[i-1].value >= x.value));
+
+      // 色はカテゴリに固定される（順位で塗り替わらない）
+      const topId = b.rows[0].id;
+      const slotBefore = b.slices.find(x => x.id === topId).colorSlot;
+      eq("色はカテゴリに固定", slotBefore, Sel.cat(topId).colorSlot);
+    });
+
+    // 推移
+    const t = seedState();
+    const c0 = t.categories[0].id, m0 = t.methods[0].id;
+    t.transactions.push(
+      { id:"a", date:"2026-04-01", amount:5000,  type:"expense", incomeKind:null,      categoryId:c0, methodId:m0, detail:"" },
+      { id:"b", date:"2026-05-01", amount:3000,  type:"expense", incomeKind:null,      categoryId:c0, methodId:m0, detail:"" },
+      { id:"c", date:"2026-05-02", amount:20000, type:"income",  incomeKind:"earning", categoryId:c0, methodId:m0, detail:"" }
+    );
+    withState(t, () => {
+      const d = Sel.trend("2026-05", 3);
+      eq("直近3ヶ月ぶん返る", d.length, 3);
+      eq("並びは古い順", d.map(x=>x.monthKey), ["2026-03","2026-04","2026-05"]);
+      eq("4月の支出", d[1].expense, 5000);
+      eq("5月の支出", d[2].expense, 3000);
+      eq("5月の収入", d[2].income, 20000);
+      eq("5月の収支", d[2].net, 17000);
+      eq("記録の無い月は0", d[0].expense, 0);
+    });
+
+    // ペース
+    const p = seedState();
+    const pc = p.categories[0].id;
+    p.budgets = { "2026-05": { [pc]: 30000 } };
+    p.transactions.push({ id:"p1", date:"2026-05-05", amount:9000, type:"expense",
+      incomeKind:null, categoryId:pc, methodId:p.methods[0].id, detail:"" });
+    withState(p, () => {
+      const r = Sel.pace("2026-05");
+      eq("予算合計", r.budget, 30000);
+      eq("残り", r.remain, 21000);
+      eq("過去の月は月末まで経過扱い", r.elapsed, 31);
+      eq("過去の月の残り日数は0", r.left, 0);
+      eq("1日平均 = 9000/31", Math.round(r.perDaySoFar), Math.round(9000/31));
+    });
+
+    // 予算未設定なら remain は null（0 と区別する）
+    withState(seedState(), () => {
+      eq("予算未設定なら remain は null", Sel.pace("2026-05").remain, null);
+    });
+
+    // 用途がマイナスになる場合（立替精算が使った額を上回る）。
+    // v1では入金を負の金額で記録していたので、給与を負で入れていた人は必ずこうなる。
+    g("S10c 用途がマイナスの月");
+    const neg = seedState();
+    const nc = neg.categories[0].id, nc2 = neg.categories[1].id, nm = neg.methods[0].id;
+    neg.transactions.push(
+      { id:"n1", date:"2026-05-01", amount:2000,   type:"expense", incomeKind:null,     categoryId:nc,  methodId:nm, detail:"" },
+      { id:"n2", date:"2026-05-02", amount:260000, type:"income",  incomeKind:"refund", categoryId:nc,  methodId:nm, detail:"給与を負で記録していた分" },
+      { id:"n3", date:"2026-05-03", amount:8000,   type:"expense", incomeKind:null,     categoryId:nc2, methodId:nm, detail:"" }
+    );
+    withState(neg, () => {
+      const b = Sel.breakdown("2026-05");
+      eq("マイナスの用途はスライスから外れる", b.slices.map(x=>x.id), [nc2]);
+      eq("マイナスの用途は negatives に入る",  b.negatives.map(x=>x.id), [nc]);
+      // ★ 不変条件: 円の中央の数字はスライスの和と必ず一致する
+      eq("Σスライス == ドーナツ中央の合計", b.slices.reduce((a,x)=>a+x.value,0), b.total);
+      eq("ドーナツの合計は正の分だけ", b.total, 8000);
+      eq("実際の支出は差し引き後", b.expense, 2000 - 260000 + 8000);
+      ok("合計と実支出が違うことを呼び出し側が判別できる", b.total !== b.expense);
+
+      // グラフが落ちないこと
+      const svg = toHTML(Chart.donut(b.slices, b.total));
+      ok("マイナス月でもドーナツが描ける", svg.indexOf("<svg") > -1);
+      ok("マイナスの扇は描かれない", (svg.match(/class="seg"/g)||[]).length === 1);
+      const tr = toHTML(Chart.trend(Sel.trend("2026-05", 3)));
+      ok("マイナス月でも推移グラフが描ける", tr.indexOf("<svg") > -1);
+      ok("負の高さの棒が出ない", tr.indexOf("NaN") === -1 && tr.indexOf("e-") === -1);
+    });
+
+    g("S10b グラフの描画");
+    withState(s, () => {
+      const b = Sel.breakdown("2026-05");
+      const svg = toHTML(Chart.donut(b.slices, b.total));
+      eq("スライス数ぶんの円弧が出る", (svg.match(/class="seg"/g)||[]).length, 6);
+      ok("合計がドーナツ中央に出る", svg.indexOf(yen(b.total)) > -1);
+      ok("各スライスに読み上げ用のtitleがある", (svg.match(/<title>/g)||[]).length === 6);
+      ok("色は系列トークンを参照する", svg.indexOf("var(--s") > -1);
+      const empty = toHTML(Chart.donut([], 0));
+      ok("データ0件でも壊れない", empty.indexOf("記録なし") > -1);
+      const tr = toHTML(Chart.trend(Sel.trend("2026-05", 12)));
+      ok("推移グラフが描ける", tr.indexOf("<svg") === 0 || tr.indexOf("<svg") > -1);
+      ok("目盛り線は実線（点線を使わない）", tr.indexOf("stroke-dasharray") === -1 || tr.indexOf("grid-line") > -1);
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -1919,7 +2501,7 @@ function boot(){
   if (th && th !== "auto") document.documentElement.dataset.theme = th;
 
   // ビューを依存つきで登録する（この宣言がそのまま仕様書になる）
-  Store.register("v-status",   [D.TX,D.SUB,D.BUDGET,D.CAT,D.METHOD,D.UI], View.status,   $('[data-route="status"]'));
+  Store.register("v-status",   [D.TX,D.SUB,D.BUDGET,D.CAT,D.METHOD,D.UI], View.status,   $('[data-route="status"]'), {deferIfFocused:true});
   Store.register("v-history",  [D.TX,D.SUB,D.CAT,D.METHOD,D.UI],          View.history,  $('[data-route="history"]'));
   Store.register("v-schedule", [D.TX,D.SUB,D.METHOD,D.ACCOUNT,D.HOLIDAY], View.schedule, $('[data-route="schedule"]'));
   Store.register("v-settings", [D.TX,D.SUB,D.CAT,D.METHOD,D.ACCOUNT,D.PREF,D.HOLIDAY], View.settings, $('[data-route="settings"]'));
@@ -1955,6 +2537,39 @@ document.addEventListener("input", e => {
       i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
   if (e.target.id === "entry-date" || e.target.id === "entry-detail") syncEntryInputs();
 });
+
+/* 予算欄は blur（change）で確定させる。入力中に再描画すると
+   カーソルが飛ぶので、ビュー側も deferIfFocused で守っている。 */
+document.addEventListener("change", e => {
+  const catId = e.target.dataset && e.target.dataset.budgetCat;
+  if (!catId) return;
+  const mk = statusMonth();
+  const v = e.target.value.trim();
+  Store.commit(s => {
+    const dst = s.budgets[mk] = Object.assign({}, s.budgets[mk]);
+    // 空欄は「未設定」に戻す。0 は明示的な 0 として残す（繰り越しに勝たせるため）
+    if (v === "") delete dst[catId];
+    else dst[catId] = Math.max(0, Math.round(Number(v) || 0));
+  }, D.BUDGET);
+});
+
+/* グラフのホバー用ツールチップ */
+(function(){
+  let tip = null;
+  const hide = () => { if (tip) tip.classList.remove("on"); };
+  document.addEventListener("pointermove", e => {
+    const t = e.target.closest && e.target.closest("[data-tip]");
+    if (!t){ hide(); return; }
+    if (!tip){ tip = document.createElement("div"); tip.className = "tip"; document.body.appendChild(tip); }
+    const txt = t.dataset.tip.split("　");
+    tip.innerHTML = toHTML(html`${txt[0]}${txt[1] ? html`<span class="t2">${txt[1]}</span>` : ""}`);
+    tip.style.left = Math.min(window.innerWidth - 12, Math.max(12, e.clientX)) + "px";
+    tip.style.top  = e.clientY + "px";
+    tip.classList.add("on");
+  }, { passive:true });
+  document.addEventListener("pointerleave", hide, true);
+  window.addEventListener("scroll", hide, { passive:true });
+})();
 // シートを閉じたら入力を確定させない（キャンセル扱い）
 ["#sheet-entry","#sheet-detail"].forEach(id => {
   const d = $(id); if (d) d.addEventListener("close", () => {});
