@@ -331,6 +331,12 @@ try{
   /* 収支だけは見出し数字なので、等幅をやめて自然な字送りにする */
   .sum3 > div:last-child .v{ font-size:30px; font-variant-numeric:normal; letter-spacing:-.025em; }
   .sum3 .v.ex{ color:var(--red); } .sum3 .v.in{ color:var(--accent); }
+  .sum3 .v.sv{ color:var(--s7); }
+  .sum3 .sub-k{ display:block; font-size:10.5px; font-weight:600; color:var(--ink-faint); margin-top:2px; }
+  .row .amt.sv, .amount-display .val.sv{ color:var(--s7); }
+  /* 種別が4つになると窮屈なので、狭い画面では文字を詰める */
+  .seg4 button{ padding:9px 2px; font-size:11.5px; }
+  @media (min-width: 420px){ .seg4 button{ font-size:12.5px; padding:9px 6px; } }
 
   /* 金額は桁を縦に揃える */
   .legend-row .vl, .legend-row .pc, .row .amt, .bud-bot, .bud-top input,
@@ -371,6 +377,9 @@ try{
     margin-bottom:10px;
   }
   .amount-display .expr{ font-size:12px; color:var(--ink-soft); min-height:17px; }
+  /* 物理キーボードのある画面でだけ案内を出す */
+  .kbd-hint{ display:none; color:var(--ink-faint); font-size:11px; }
+  @media (hover: hover) and (pointer: fine){ .kbd-hint{ display:inline; } }
   .amount-display .val{ font-size:30px; font-weight:800; letter-spacing:-.02em; line-height:1.2; }
   .amount-display .val.in{ color:var(--accent); }
   .keypad{ display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
@@ -679,8 +688,15 @@ const SUB_STATUS      = ["有効","一時停止","解約予定","停止"];
 const HOLIDAY_ADJUST  = ["翌営業日","前営業日","翌営業日(月跨ぎは前営業日)","調整なし"];
 const INTERVALS       = ["月次","週次","年次"];
 
-const CAT_SUB   = "cat_subscription";
-const CAT_UNCAT = "cat_uncategorized";
+const CAT_SUB    = "cat_subscription";
+const CAT_UNCAT  = "cat_uncategorized";
+const CAT_SAVING = "cat_saving";
+
+/* 取引の種別。
+   貯蓄・投資（積立NISAなど）は「支出」ではなく「振替」として持つ。
+   消費ではなくお金の置き場所が変わっただけで、純資産は減っていないため。
+   支出に混ぜると、使いすぎの判断・予算のペース・節約診断が全部ずれる。 */
+const TX_TYPES = ["expense","refund","earning","transfer"];
 
 /* 系列色は8スロット。色はカテゴリに固定し、順位では決めない
    （絞り込みで件数が変わっても残った色が塗り替わらないようにするため）。
@@ -763,8 +779,11 @@ function emptyState(){
 
 function systemCategories(){
   return [
-    { id:CAT_SUB,   name:"サブスク・固定費", colorSlot:6, icon:"🔁", order:900, archived:false, system:true,  fixed:true  },
-    { id:CAT_UNCAT, name:"未分類",           colorSlot:5, icon:"❓", order:999, archived:false, system:true,  fixed:false },
+    { id:CAT_SUB,    name:"サブスク・固定費", colorSlot:6, icon:"🔁", order:900, archived:false, system:true, kind:"expense" },
+    { id:CAT_UNCAT,  name:"未分類",           colorSlot:5, icon:"❓", order:999, archived:false, system:true, kind:"expense" },
+    // 貯蓄・投資は用途（消費の内訳）ではないので kind を分けている。
+    // 円グラフ・予算・節約診断はこれを見ない
+    { id:CAT_SAVING, name:"貯蓄・投資",       colorSlot:2, icon:"🏦", order:910, archived:false, system:true, kind:"saving" },
   ];
 }
 
@@ -773,10 +792,10 @@ function seedState(){
   const s = emptyState();
   s.categories = SEED_CATEGORIES.map(([name,icon],i) => ({
     id: uid("cat"), name, icon, colorSlot: i % SERIES_N,
-    order: i, archived:false, system:false, fixed:false,
+    order: i, archived:false, system:false, kind:"expense",
   }));
   s.categories.push(...systemCategories());
-  s.categories.push({ id:uid("cat"), name:"その他", icon:"📦", colorSlot:7, order:890, archived:false, system:false, fixed:false });
+  s.categories.push({ id:uid("cat"), name:"その他", icon:"📦", colorSlot:7, order:890, archived:false, system:false, kind:"expense" });
   s.methods = SEED_METHODS.map(([name,kind],i) => ({
     id: uid("mth"), name, kind, order:i, archived:false, billing:null,
   }));
@@ -795,7 +814,7 @@ function v1_to_v2(v1){
   (pd.categories || []).forEach((name, i) => {
     if (!name || catByName.has(name)) return;
     const c = { id:uid("cat"), name, icon:"", colorSlot: i % SERIES_N,
-                order:i, archived:false, system:false, fixed:false };
+                order:i, archived:false, system:false, kind:"expense" };
     s.categories.push(c); catByName.set(name, c); report.categories++;
   });
   systemCategories().forEach(c => { s.categories.push(c); catByName.set(c.name, c); });
@@ -803,7 +822,7 @@ function v1_to_v2(v1){
     if (!name) return CAT_UNCAT;
     if (catByName.has(name)) return catByName.get(name).id;
     const c = { id:uid("cat"), name, icon:"", colorSlot: s.categories.length % SERIES_N,
-                order:s.categories.length, archived:false, system:false, fixed:false };
+                order:s.categories.length, archived:false, system:false, kind:"expense" };
     s.categories.push(c); catByName.set(name, c); report.created.push("用途:"+name);
     return c.id;
   };
@@ -966,6 +985,14 @@ function validate(input){
 
   // システムカテゴリは必ず在る
   systemCategories().forEach(sc => { if (!byId(S.categories, sc.id)) S.categories.push(sc); });
+  // 貯蓄・投資という区別を後から足したので、古い状態にも補う
+  S.categories.forEach(c => { if (!c.kind) c.kind = c.id === CAT_SAVING ? "saving" : "expense"; });
+  // 振替なのに用途が消費側を指していたら、預け先へ寄せる
+  S.transactions.forEach(t => {
+    const c = byId(S.categories, t.categoryId);
+    if (t.type === "transfer" && (!c || c.kind !== "saving")){ t.categoryId = CAT_SAVING; repaired.push("預け先を補正"); }
+    if (t.type !== "transfer" && c && c.kind === "saving"){ t.type = "transfer"; repaired.push("貯蓄として補正"); }
+  });
   if (!S.methods.length){ S.methods = seedState().methods; repaired.push("支払方法を初期化"); }
 
   const before = S.transactions.length;
@@ -976,8 +1003,9 @@ function validate(input){
     if (!t.id || seen.has(t.id)){ t.id = uid("t"); repaired.push("ID重複を採番"); }
     seen.add(t.id);
     t.amount = Math.abs(Number(t.amount));
-    if (t.type !== "income" && t.type !== "expense") t.type = "expense";
+    if (!["income","expense","transfer"].includes(t.type)) t.type = "expense";
     if (t.type === "income" && t.incomeKind !== "earning") t.incomeKind = "refund";
+    if (t.type !== "income") t.incomeKind = null;
     if (!byId(S.categories, t.categoryId)){ t.categoryId = CAT_UNCAT; repaired.push("用途を未分類に"); }
     if (!byId(S.methods, t.methodId)){
       const m = S.methods[0]; t.methodId = m ? m.id : null; repaired.push("支払方法を補正");
@@ -1081,11 +1109,22 @@ Sel.cat = id => byId(Store.state.categories, id) ||
 Sel.mth = id => byId(Store.state.methods, id) ||
                 { id, name:"不明", kind:"cash", order:999, archived:false, billing:null };
 Sel.acc = id => byId(Store.state.accounts, id);
-Sel.activeCategories = () => Store.state.categories.filter(c => !c.archived).sort((a,b)=>a.order-b.order);
+/** 用途＝消費の内訳。貯蓄・投資は消費ではないので、ここには含めない。
+ *  円グラフ・予算・節約診断・年間の用途別は、すべてこれを回している。 */
+Sel.activeCategories = () => Store.state.categories
+  .filter(c => !c.archived && (c.kind || "expense") !== "saving")
+  .sort((a,b)=>a.order-b.order);
+/** 振替先（積立NISA・定期預金など） */
+Sel.savingCategories = () => Store.state.categories
+  .filter(c => !c.archived && c.kind === "saving")
+  .sort((a,b)=>a.order-b.order);
+Sel.allCategories = () => Store.state.categories
+  .filter(c => !c.archived).sort((a,b)=>a.order-b.order);
 Sel.activeMethods    = () => Store.state.methods.filter(m => !m.archived).sort((a,b)=>a.order-b.order);
 /** 手入力の候補。サブスク用は自動計上されるので、未分類は移行の受け皿なので出さない。
  *  ただし実際にその用途が使われている場合は編集できるよう残す。 */
-Sel.entryCategories = () => {
+Sel.entryCategories = (type) => {
+  if (type === "transfer") return Sel.savingCategories();
   const used = new Set(Store.state.transactions.map(t => t.categoryId));
   return Sel.activeCategories().filter(c =>
     c.id !== CAT_SUB && (c.id !== CAT_UNCAT || used.has(CAT_UNCAT)));
@@ -1246,9 +1285,15 @@ Sel.monthTotals = memo(function(monthKey){
   const entries = Sel.entriesInRange(a,b);
   const totals = {};
   Sel.activeCategories().forEach(c => { totals[c.id] = 0; });
-  let expense = 0, income = 0;
+  const savings = {};
+  Sel.savingCategories().forEach(c => { savings[c.id] = 0; });
+  let expense = 0, income = 0, saving = 0;
   for (const e of entries){
-    if (e.type === "income"){
+    if (e.type === "transfer"){
+      // 貯蓄・投資は消費ではないので支出に足さない。用途の内訳にも入れない
+      savings[e.categoryId] = (savings[e.categoryId]||0) + e.amount;
+      saving += e.amount;
+    } else if (e.type === "income"){
       if (e.incomeKind === "earning"){ income += e.amount; }
       else { totals[e.categoryId] = (totals[e.categoryId]||0) - e.amount; expense -= e.amount; }
     } else {
@@ -1256,7 +1301,13 @@ Sel.monthTotals = memo(function(monthKey){
       expense += e.amount;
     }
   }
-  return { totals, expense, income, net: income - expense, entries };
+  return {
+    totals, savings, expense, income, saving,
+    // 差引＝手元に残った額。貯蓄も財布からは出ているので引く
+    net: income - expense - saving,
+    savingRate: income > 0 ? saving / income : null,
+    entries,
+  };
 });
 
 /** 予算の繰り越し。設定済みの直近月を継承する。
@@ -1317,7 +1368,7 @@ Sel.trend = memo(function(monthKey, n){
     const [y,m] = addMonths(y0, m0, -i);
     const mk = monthKeyOf(y,m);
     const t = Sel.monthTotals(mk);
-    out.push({ monthKey:mk, y, m, expense:t.expense, income:t.income, net:t.net });
+    out.push({ monthKey:mk, y, m, expense:t.expense, income:t.income, saving:t.saving, net:t.net });
   }
   return out;
 });
@@ -1379,8 +1430,10 @@ Sel.calendar = memo(function(monthKey){
   const byDay = {};
   for (const e of entries){
     const d = Number(e.date.slice(8));
-    if (!byDay[d]) byDay[d] = { spend:0, income:0, n:0 };
-    if (e.type === "income"){
+    if (!byDay[d]) byDay[d] = { spend:0, income:0, saving:0, n:0 };
+    if (e.type === "transfer"){
+      byDay[d].saving = (byDay[d].saving || 0) + e.amount;   // 貯蓄は支出に数えない
+    } else if (e.type === "income"){
       if (e.incomeKind === "earning") byDay[d].income += e.amount;
       else byDay[d].spend -= e.amount;
     } else byDay[d].spend += e.amount;
@@ -1406,7 +1459,7 @@ Sel.calendar = memo(function(monthKey){
   const cells = [];
   for (let i = 0; i < lead; i++) cells.push(null);
   for (let d = 1; d <= days; d++){
-    cells.push({ d, date: monthKey + "-" + pad2(d), ...(byDay[d] || { spend:0, income:0, n:0 }),
+    cells.push({ d, date: monthKey + "-" + pad2(d), ...(byDay[d] || { spend:0, income:0, saving:0, n:0 }),
                  pay: pays[d] || null,
                  weekend: [0,6].includes(new Date(y,m-1,d).getDay()),
                  holiday: !!Store.state.holidays[monthKey + "-" + pad2(d)] });
@@ -1420,13 +1473,13 @@ Sel.annual = memo(function(year){
   const cats = Sel.activeCategories();
   const rows = cats.map(c => ({ id:c.id, name:c.name, icon:c.icon, colorSlot:c.colorSlot, total:0, prev:0 }));
   const idx = new Map(rows.map(r => [r.id, r]));
-  let total = 0, income = 0, prevTotal = 0, months = 0;
+  let total = 0, income = 0, prevTotal = 0, months = 0, saving = 0;
 
   for (let m = 1; m <= 12; m++){
     const mk = year + "-" + pad2(m);
     const t = Sel.monthTotals(mk);
-    if (t.expense !== 0 || t.income !== 0) months++;
-    total += t.expense; income += t.income;
+    if (t.expense !== 0 || t.income !== 0 || t.saving !== 0) months++;
+    total += t.expense; income += t.income; saving += t.saving;
     Object.entries(t.totals).forEach(([id,v]) => { const r = idx.get(id); if (r) r.total += v; });
 
     const p = Sel.monthTotals((Number(year)-1) + "-" + pad2(m));
@@ -1434,7 +1487,8 @@ Sel.annual = memo(function(year){
     Object.entries(p.totals).forEach(([id,v]) => { const r = idx.get(id); if (r) r.prev += v; });
   }
   return {
-    year, total, income, net: income - total, prevTotal, months,
+    year, total, income, saving, net: income - total - saving, prevTotal, months,
+    savingRate: income > 0 ? saving / income : null,
     avg: months ? total / months : 0,
     rows: rows.filter(r => r.total !== 0 || r.prev !== 0).sort((a,b) => b.total - a.total),
   };
@@ -1664,12 +1718,13 @@ function closeSheet(id){ const d = $(id); if (d && d.open) d.close(); }
 /* --- 入力シートの状態（テンキー込み） --- */
 const Entry = {
   open:false, editId:null,
+  // type は expense / income / transfer。transfer は貯蓄・投資（消費ではない）
   type:"expense", incomeKind:"refund",
   date:"", categoryId:null, methodId:null, detail:"",
   acc:null, op:null, cur:"0",
 
   reset(pre){
-    const cats = Sel.entryCategories();
+    const cats = Sel.entryCategories("expense");
     const mths = Sel.activeMethods();
     this.editId = null;
     this.type = "expense"; this.incomeKind = "refund";
@@ -1828,11 +1883,12 @@ View.entrySheet = function(){
   const host = $("#sheet-entry-in");
   if (!host) return;
   host.classList.add("split");
-  const cats = Sel.entryCategories();
+  const isTransfer = Entry.type === "transfer";
+  const cats = Sel.entryCategories(Entry.type);
   const mths = Sel.activeMethods();
   const isIncome = Entry.type === "income";
   const v = Entry.value();
-  const tpl = Entry.editId ? [] : Sel.templates();
+  const tpl = (Entry.editId || isTransfer) ? [] : Sel.templates();
 
   mount(host, html`
     <div class="grabber"></div>
@@ -1842,11 +1898,13 @@ View.entrySheet = function(){
     </div>
 
     <div class="sheet-scroll">
-      <div class="seg" role="group" aria-label="種別">
+      <div class="seg seg4" role="group" aria-label="種別">
         <button data-act="entry:type" data-v="expense"  aria-pressed="${String(Entry.type==="expense")}">💸 支出</button>
-        <button data-act="entry:type" data-v="refund"   aria-pressed="${String(isIncome && Entry.incomeKind==="refund")}">↩️ 立替精算</button>
+        <button data-act="entry:type" data-v="refund"   aria-pressed="${String(isIncome && Entry.incomeKind==="refund")}">↩️ 立替</button>
         <button data-act="entry:type" data-v="earning"  aria-pressed="${String(isIncome && Entry.incomeKind==="earning")}">💰 収入</button>
+        <button data-act="entry:type" data-v="transfer" aria-pressed="${String(isTransfer)}">🏦 貯蓄</button>
       </div>
+      ${isTransfer ? html`<p class="note" style="margin:10px 0 0">積立NISAや定期預金など、<strong>使ったのではなく預け替えたお金</strong>です。支出には入らず、貯蓄額として別に集計されます。</p>` : ""}
 
       ${tpl.length ? html`
         <div class="note mb0" style="margin:14px 0 4px">よく使う入力</div>
@@ -1858,7 +1916,7 @@ View.entrySheet = function(){
             </button>`)}
         </div>` : ""}
 
-      <div class="note mb0" style="margin:10px 0 4px">用途</div>
+      <div class="note mb0" style="margin:10px 0 4px">${isTransfer ? "預け先" : "用途"}</div>
       <div class="chip-row">
         ${cats.map(c => html`<button class="chip" data-act="entry:cat" data-id="${c.id}" aria-pressed="${String(c.id===Entry.categoryId)}"><span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${(c.icon?c.icon+" ":"")+c.name}</button>`)}
         <button class="chip add" data-act="cat:quickadd">＋ 追加</button>
@@ -1888,8 +1946,8 @@ View.entrySheet = function(){
 
     <div class="sheet-foot">
       <div class="amount-display">
-        <div class="expr num">${Entry.exprText()}</div>
-        <div class="val num ${isIncome ? "in" : ""}" role="textbox" aria-live="polite" aria-label="金額">${yen(v)}</div>
+        <div class="expr num">${Entry.exprText() || raw('<span class="kbd-hint">キーボードでも入力できます</span>')}</div>
+        <div class="val num ${isIncome ? "in" : isTransfer ? "sv" : ""}" role="textbox" aria-live="polite" aria-label="金額">${yen(v)}</div>
       </div>
       <div class="keypad">
         <button data-act="key" data-k="7">7</button>
@@ -1927,7 +1985,7 @@ View.status = function(){
   const host = $('[data-route="status"]');
   const mk = statusMonth();
   const [y,m] = mk.split("-").map(Number);
-  const { expense, income, net } = Sel.monthTotals(mk);
+  const { expense, income, net, saving, savingRate } = Sel.monthTotals(mk);
 
   // 年間タブは年単位の話なので、月送りと月の収支は出さない（年送りは本体側にある）
   const isAnnual = StatusUI.tab === "annual";
@@ -1942,7 +2000,11 @@ View.status = function(){
         <div class="sum3">
           <div><div class="k">支出</div><div class="v ex">${yen(expense)}</div></div>
           <div><div class="k">収入</div><div class="v in">${yen(income)}</div></div>
-          <div><div class="k">収支</div><div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
+          ${saving > 0 ? html`<div>
+            <div class="k">貯蓄・投資${savingRate != null ? html`<span class="sub-k">貯蓄率 ${(savingRate*100).toFixed(1)}%</span>` : ""}</div>
+            <div class="v sv">${yen(saving)}</div></div>` : ""}
+          <div><div class="k">${saving > 0 ? "差引（手元に残った額）" : "収支"}</div>
+               <div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
         </div>`}
       <div class="seg" role="group" aria-label="表示切替" style="${isAnnual ? "" : "margin-top:12px"}">
         <button data-act="status:tab" data-v="breakdown" aria-pressed="${String(StatusUI.tab==="breakdown")}">内訳</button>
@@ -1962,6 +2024,7 @@ View.status = function(){
 View._breakdown = function(mk){
   const { slices, rows, negatives, total, expense } = Sel.breakdown(mk);
   const p = Sel.pace(mk);
+  const { savings, saving } = Sel.monthTotals(mk);
   return html`
     <div class="cols">
       <div class="panel">
@@ -2009,6 +2072,18 @@ View._breakdown = function(mk){
         ${rows.length > slices.length
           ? html`<p class="note" style="margin-top:12px">用途が ${rows.length} 件あるため、円グラフでは上位 ${DONUT_MAX-1} 件とその他にまとめています。全件は下の「予算」タブで確認できます。</p>`
           : ""}
+
+        ${saving > 0 ? html`
+          <h2 style="margin-top:18px">貯蓄・投資</h2>
+          <p class="note">使ったお金ではないので、上の支出には含めていません。</p>
+          <div class="legend">
+            ${Sel.savingCategories().filter(c => (savings[c.id]||0) !== 0).map(c => html`
+              <div class="legend-row" style="cursor:default">
+                <span class="sw" style="background:${raw(slotVar(c.colorSlot))}"></span>
+                <span class="nm">${(c.icon ? c.icon+" " : "") + c.name}</span>
+                <span class="vl">${yen(savings[c.id])}</span>
+              </div>`)}
+          </div>` : ""}
       </div>
     </div>`;
 };
@@ -2073,7 +2148,10 @@ View._annual = function(mk){
       <div class="sum3">
         <div><span class="k">年間の支出</span><span class="v ex">${yen(a.total)}</span></div>
         <div><span class="k">年間の収入</span><span class="v in">${yen(a.income)}</span></div>
-        <div><span class="k">年間の収支</span><span class="v" style="color:${a.net>=0?"var(--accent)":"var(--red)"}">${yen(a.net)}</span></div>
+        ${a.saving > 0 ? html`<div>
+          <span class="k">年間の貯蓄・投資${a.savingRate != null ? html`<span class="sub-k">貯蓄率 ${(a.savingRate*100).toFixed(1)}%</span>` : ""}</span>
+          <span class="v sv">${yen(a.saving)}</span></div>` : ""}
+        <div><span class="k">${a.saving > 0 ? "差引（手元に残った額）" : "年間の収支"}</span><span class="v" style="color:${a.net>=0?"var(--accent)":"var(--red)"}">${yen(a.net)}</span></div>
       </div>
       <div class="pace" style="margin-top:12px">
         <div><div class="k">記録のある月</div><div class="v">${a.months}ヶ月</div></div>
@@ -2178,11 +2256,12 @@ View.history = function(){
   for (const e of entries){
     if (!cur || cur.date !== e.date){ cur = { date:e.date, items:[], sum:0 }; days.push(cur); }
     cur.items.push(e);
-    cur.sum += e.type === "income" && e.incomeKind === "earning" ? 0
+    cur.sum += e.type === "transfer" ? 0
+             : e.type === "income" && e.incomeKind === "earning" ? 0
              : e.type === "income" ? -e.amount : e.amount;
   }
   const [y,m] = mk.split("-").map(Number);
-  const total = entries.reduce((s,e)=> s + (e.type==="income" && e.incomeKind==="earning" ? 0 : e.type==="income" ? -e.amount : e.amount), 0);
+  const total = entries.reduce((s,e)=> s + (e.type==="transfer" ? 0 : e.type==="income" && e.incomeKind==="earning" ? 0 : e.type==="income" ? -e.amount : e.amount), 0);
 
   mount(host, html`
     <div class="panel">
@@ -2227,9 +2306,9 @@ View.history = function(){
                   <span class="swatch" style="background:${raw(Sel.catColor(e.categoryId))}"></span>
                   <span class="main">
                     <span class="l1">${e.label}${e.source==="sub" ? raw(' <span class="tag gray">サブスク</span>') : ""}</span>
-                    <span class="l2">${Sel.cat(e.categoryId).name} ・ ${Sel.mth(e.methodId).name}${e.type==="income" ? (e.incomeKind==="earning" ? " ・ 収入" : " ・ 立替精算") : ""}</span>
+                    <span class="l2">${Sel.cat(e.categoryId).name} ・ ${Sel.mth(e.methodId).name}${e.type==="transfer" ? " ・ 貯蓄・投資" : e.type==="income" ? (e.incomeKind==="earning" ? " ・ 収入" : " ・ 立替精算") : ""}</span>
                   </span>
-                  <span class="amt num ${e.type==="income" ? "in" : ""}">${e.type==="income" ? "+" : ""}${yen(e.amount)}</span>
+                  <span class="amt num ${e.type==="income" ? "in" : e.type==="transfer" ? "sv" : ""}">${e.type==="income" ? "+" : ""}${yen(e.amount)}</span>
                 </button>`)}
             </div>`)}
     </div>
@@ -2828,8 +2907,16 @@ const Actions = {
   "sheet:close"(){ closeSheet("#sheet-detail"); },
   "entry:type"({v}){
     syncEntryInputs();
-    if (v === "expense"){ Entry.type = "expense"; }
-    else { Entry.type = "income"; Entry.incomeKind = v; }
+    const before = Entry.type;
+    if (v === "expense")      { Entry.type = "expense"; }
+    else if (v === "transfer"){ Entry.type = "transfer"; }
+    else                      { Entry.type = "income"; Entry.incomeKind = v; }
+    // 支出用と貯蓄用で用途の一覧が別なので、行き来したら選び直す
+    const wasTransfer = before === "transfer", isTransfer = Entry.type === "transfer";
+    if (wasTransfer !== isTransfer){
+      const list = Sel.entryCategories(Entry.type);
+      Entry.categoryId = list.length ? list[0].id : null;
+    }
     View.entrySheet();
   },
   "entry:tpl"({id}){
@@ -2909,7 +2996,8 @@ const Actions = {
     const id = uid("cat");
     Store.commit(s => s.categories.push({
       id, name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
-      order:s.categories.filter(c=>!c.system).length, archived:false, system:false, fixed:false,
+      order:s.categories.filter(c=>!c.system).length, archived:false, system:false,
+      kind: Entry.type === "transfer" ? "saving" : "expense",
     }), D.CAT);
     Entry.categoryId = id; View.entrySheet();
   },
@@ -3036,7 +3124,7 @@ const Actions = {
     if (!name || !name.trim()) return;
     Store.commit(s => s.categories.push({
       id:uid("cat"), name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
-      order: s.categories.filter(c => !c.system).length, archived:false, system:false, fixed:false,
+      order: s.categories.filter(c => !c.system).length, archived:false, system:false, kind:SettingsUI.catKind || "expense",
     }), D.CAT);
     View.settings();
   },
@@ -3178,7 +3266,8 @@ const Actions = {
     };
     const body = rows.map(t => [
       t.date,
-      t.type === "income" ? (t.incomeKind === "earning" ? "収入" : "立替精算") : "支出",
+      t.type === "transfer" ? "貯蓄・投資"
+        : t.type === "income" ? (t.incomeKind === "earning" ? "収入" : "立替精算") : "支出",
       t.amount, Sel.cat(t.categoryId).name, Sel.mth(t.methodId).name, t.detail || "",
     ].map(esc).join(","));
     // BOM を付けないと Excel が UTF-8 と判定せず文字化けする
@@ -3270,8 +3359,12 @@ function buildAnalysisText(months, includeRows){
   L.push(`対象期間: ${data[0].y}年${data[0].m}月 〜 ${data[data.length-1].y}年${data[data.length-1].m}月（${months}ヶ月）`);
   L.push("");
 
+  L.push("※ 貯蓄・投資への積立は「使ったお金」ではないため、支出には含めていません。");
+  L.push("");
   L.push("■ 月ごとの収支");
-  data.forEach(d => L.push(`${d.y}/${pad2(d.m)}  支出 ${Math.round(d.expense).toLocaleString("ja-JP")} / 収入 ${Math.round(d.income).toLocaleString("ja-JP")} / 収支 ${Math.round(d.net).toLocaleString("ja-JP")}`));
+  data.forEach(d => L.push(`${d.y}/${pad2(d.m)}  支出 ${Math.round(d.expense).toLocaleString("ja-JP")} / 収入 ${Math.round(d.income).toLocaleString("ja-JP")}`
+    + (d.saving ? ` / 貯蓄 ${Math.round(d.saving).toLocaleString("ja-JP")}` : "")
+    + ` / 差引 ${Math.round(d.net).toLocaleString("ja-JP")}`));
   const sumEx = data.reduce((a,d)=>a+d.expense,0);
   L.push(`合計 支出 ${Math.round(sumEx).toLocaleString("ja-JP")} / 月平均 ${Math.round(sumEx/months).toLocaleString("ja-JP")}`);
   L.push("");
@@ -3298,6 +3391,13 @@ function buildAnalysisText(months, includeRows){
     L.push("");
   }
 
+  const sumSave = data.reduce((a,d) => a + (d.saving || 0), 0);
+  if (sumSave > 0){
+    L.push("■ 貯蓄・投資（支出には含めていない）");
+    L.push(`期間合計 ${Math.round(sumSave).toLocaleString("ja-JP")} / 月平均 ${Math.round(sumSave/months).toLocaleString("ja-JP")}`);
+    L.push("");
+  }
+
   const subs = Store.state.subscriptions.filter(x => x.status === "有効" || x.status === "解約予定");
   if (subs.length){
     L.push("■ サブスク・固定費");
@@ -3313,7 +3413,7 @@ function buildAnalysisText(months, includeRows){
       .filter(t => t.date >= from && t.date <= to)
       .sort((a,b) => a.date < b.date ? -1 : 1);
     L.push(`■ 明細（${rows.length}件）`);
-    rows.forEach(t => L.push(`${t.date}  ${Sel.cat(t.categoryId).name}  ${t.type === "income" ? "-" : ""}${t.amount.toLocaleString("ja-JP")}  ${Sel.mth(t.methodId).name}  ${t.detail || ""}`.trimEnd()));
+    rows.forEach(t => L.push(`${t.date}  ${Sel.cat(t.categoryId).name}  ${t.type === "income" ? "-" : ""}${t.amount.toLocaleString("ja-JP")}${t.type === "transfer" ? "（積立）" : ""}  ${Sel.mth(t.methodId).name}  ${t.detail || ""}`.trimEnd()));
     L.push("");
   }
   return L.join("\n");
@@ -4074,10 +4174,112 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S14 貯蓄・投資（振替） ---------------- */
+  function s14(){
+    g("S14 貯蓄・投資は支出に入れない");
+    const s = seedState();
+    const food = s.categories[0].id, m0 = s.methods[0].id;
+    s.transactions.push(
+      { id:"e1", date:"2026-05-03", amount:70000,  type:"expense",  incomeKind:null,      categoryId:food,       methodId:m0, detail:"" },
+      { id:"i1", date:"2026-05-25", amount:260000, type:"income",   incomeKind:"earning", categoryId:food,       methodId:m0, detail:"給与" },
+      // 積立NISA 月1万
+      { id:"s1", date:"2026-05-10", amount:10000,  type:"transfer", incomeKind:null,      categoryId:CAT_SAVING, methodId:m0, detail:"積立" }
+    );
+    withState(s, () => {
+      const r = Sel.monthTotals("2026-05");
+      eq("支出に積立は入らない",   r.expense, 70000);
+      eq("貯蓄として別に集計",     r.saving, 10000);
+      eq("収入はそのまま",         r.income, 260000);
+      // 差引＝手元に残った額。貯蓄も財布からは出ている
+      eq("差引 = 収入 − 支出 − 貯蓄", r.net, 260000 - 70000 - 10000);
+      eq("貯蓄率",                 Math.round(r.savingRate*1000)/10, 3.8);
+      eq("預け先ごとの内訳",       r.savings[CAT_SAVING], 10000);
+      // ★ 用途の内訳（円グラフ）に貯蓄が混ざらないこと
+      eq("用途の内訳に貯蓄が無い", r.totals[CAT_SAVING], undefined);
+      eq("用途の内訳は消費だけ",   Object.values(r.totals).reduce((a,b)=>a+b,0), 70000);
+
+      const b = Sel.breakdown("2026-05");
+      ok("円グラフに貯蓄が出ない", !b.slices.some(x => x.id === CAT_SAVING));
+      eq("Σスライス == 支出",       b.slices.reduce((a,x)=>a+x.value,0), 70000);
+
+      // 予算のペースも貯蓄に引きずられない
+      eq("ペースの支出も消費だけ", Sel.pace("2026-05").expense, 70000);
+
+      // カレンダーでも支出に数えない
+      const cal = Sel.calendar("2026-05");
+      const d10 = cal.cells.find(x => x && x.d === 10);
+      eq("カレンダーの支出に入らない", d10.spend, 0);
+      eq("カレンダーは貯蓄を別に持つ", d10.saving, 10000);
+
+      // 年間でも分かれる
+      const a = Sel.annual("2026");
+      eq("年間の支出", a.total, 70000);
+      eq("年間の貯蓄", a.saving, 10000);
+      eq("年間の差引", a.net, 260000 - 70000 - 10000);
+    });
+
+    g("S14b 用途と預け先は混ざらない");
+    withState(s, () => {
+      const used = Sel.activeCategories().map(c => c.id);
+      ok("用途の一覧に貯蓄が出ない", !used.includes(CAT_SAVING));
+      ok("預け先の一覧には出る",      Sel.savingCategories().some(c => c.id === CAT_SAVING));
+      ok("全件取得には両方出る",      Sel.allCategories().some(c => c.id === CAT_SAVING));
+      // 入力候補も種別で切り替わる
+      ok("支出の候補に貯蓄が出ない", !Sel.entryCategories("expense").some(c => c.id === CAT_SAVING));
+      ok("貯蓄の候補は預け先だけ",    Sel.entryCategories("transfer").every(c => c.kind === "saving"));
+    });
+
+    g("S14c 古いデータの補正");
+    // kind が無い（貯蓄の概念より前の）状態を通す
+    const old = seedState();
+    old.categories = old.categories.map(c => { const x = Object.assign({}, c); delete x.kind; return x; });
+    old.transactions.push({ id:"x", date:"2026-05-01", amount:100, type:"expense",
+      incomeKind:null, categoryId:old.categories[0].id, methodId:old.methods[0].id, detail:"" });
+    const fixed = validate(old).state;
+    ok("kind が補われる", fixed.categories.every(c => !!c.kind));
+    eq("貯蓄カテゴリは saving になる", byId(fixed.categories, CAT_SAVING).kind, "saving");
+    ok("他は expense になる",
+       fixed.categories.filter(c => c.id !== CAT_SAVING).every(c => c.kind === "expense"));
+
+    // 貯蓄カテゴリなのに支出として記録されていたら振替に直す
+    const mix = seedState();
+    mix.transactions.push({ id:"m1", date:"2026-05-01", amount:10000, type:"expense",
+      incomeKind:null, categoryId:CAT_SAVING, methodId:mix.methods[0].id, detail:"" });
+    const mf = validate(mix).state;
+    eq("預け先の記録は振替に直る", mf.transactions.find(t => t.id === "m1").type, "transfer");
+
+    // 振替なのに用途が消費側を指していたら預け先に寄せる
+    const bad = seedState();
+    bad.transactions.push({ id:"b1", date:"2026-05-01", amount:10000, type:"transfer",
+      incomeKind:null, categoryId:bad.categories[0].id, methodId:bad.methods[0].id, detail:"" });
+    const bf = validate(bad).state;
+    eq("振替の用途は預け先に寄る", bf.transactions.find(t => t.id === "b1").categoryId, CAT_SAVING);
+
+    g("S14d 書き出しの表記");
+    // 節約診断は「現在月から直近nヶ月」を見るので、フィクスチャも今月に置く
+    const now = new Date();
+    const curMk = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+    const an = seedState();
+    an.transactions.push(
+      { id:"a1", date:curMk+"-03", amount:70000, type:"expense",  incomeKind:null,
+        categoryId:an.categories[0].id, methodId:an.methods[0].id, detail:"" },
+      { id:"a2", date:curMk+"-10", amount:10000, type:"transfer", incomeKind:null,
+        categoryId:CAT_SAVING, methodId:an.methods[0].id, detail:"積立" }
+    );
+    withState(an, () => {
+      const txt = buildAnalysisText(1, false);
+      ok("積立は支出に含めないと明記する", txt.indexOf("支出には含めていません") > -1);
+      ok("貯蓄の節が出る", txt.indexOf("■ 貯蓄・投資") > -1, txt.indexOf("■ 貯蓄・投資"), ">-1");
+      ok("貯蓄額が載る", txt.indexOf("10,000") > -1);
+      // 支出の数字に積立が混ざっていないこと
+      ok("支出は消費だけ", txt.indexOf("支出 70,000") > -1, txt.slice(0,400), "支出 70,000 を含む");
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -4315,6 +4517,31 @@ document.addEventListener("change", e => {
   };
   reader.onerror = () => Toast.show("ファイルを読めませんでした", {kind:"err"});
   reader.readAsText(file);
+});
+
+/* パソコンで使うときは、テンキーを押さなくてもキーボードで金額を打てるようにする。
+   メモや日付を編集している間は横取りしない。 */
+document.addEventListener("keydown", e => {
+  const sheet = $("#sheet-entry");
+  if (!sheet || !sheet.open) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  const el = document.activeElement;
+  const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+
+  if (e.key === "Enter"){
+    if (typing && el.type !== "date") el.blur();   // メモ入力中の Enter は確定だけ
+    e.preventDefault();
+    Actions["entry:save"]();
+    return;
+  }
+  if (typing) return;                               // 以下は入力欄の外にいるときだけ
+
+  if (/^[0-9]$/.test(e.key)){ e.preventDefault(); Entry.key(e.key); return; }
+  if (e.key === "+"){ e.preventDefault(); Entry.key("+"); return; }
+  if (e.key === "-"){ e.preventDefault(); Entry.key("-"); return; }
+  if (e.key === "Backspace"){ e.preventDefault(); Entry.key("back"); return; }
+  if (e.key === "Delete" || e.key === "c" || e.key === "C"){ e.preventDefault(); Entry.key("clear"); return; }
 });
 
 /* グラフのホバー用ツールチップ */
