@@ -570,6 +570,26 @@ try{
   }
   .subtabs button[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#fff; }
 
+  /* ホーム: スマホでは「次の引き落とし・ペース」を先に、
+     PCでは図を左に置きたいので広い画面だけ順序を戻す */
+  @media (min-width: 900px){
+    .cols.home > .viz{ order:-1; }
+  }
+
+  /* --- 折りたたみ --- */
+  .fold{ background:var(--surface); border:1px solid transparent; border-radius:16px;
+         box-shadow:var(--shadow); margin-bottom:12px; overflow:hidden; }
+  .fold > summary{
+    list-style:none; cursor:pointer; padding:15px 16px; font-size:14px; font-weight:800;
+    display:flex; align-items:center; justify-content:space-between; min-height:var(--tap);
+  }
+  .fold > summary::-webkit-details-marker{ display:none; }
+  .fold > summary::after{ content:"⌄"; font-size:17px; color:var(--ink-faint); transition:transform .2s var(--ease-out); }
+  .fold[open] > summary::after{ transform:rotate(180deg); }
+  .fold > summary:active{ background:var(--surface-2); }
+  .fold .panel{ box-shadow:none; border:0; border-top:1px solid var(--line);
+                border-radius:0; margin-bottom:0; }
+
   /* --- 頻度の指定（n ごと） --- */
   .freq{ display:flex; gap:8px; align-items:center; }
   .freq input{ width:84px; text-align:center; font-weight:800; }
@@ -646,7 +666,7 @@ try{
 </main>
 
 <nav class="tabbar" aria-label="メイン">
-  <button data-act="go" data-to="status"   aria-current="false"><span class="ic">📊</span>状況</button>
+  <button data-act="go" data-to="status"   aria-current="false"><span class="ic">📊</span>ホーム</button>
   <button data-act="go" data-to="history"  aria-current="false"><span class="ic">📋</span>履歴</button>
   <div class="fab-slot"><button class="fab" data-act="entry:open" aria-label="記録する">＋</button></div>
   <button data-act="go" data-to="schedule" aria-current="false"><span class="ic">📅</span>予定</button>
@@ -1626,6 +1646,23 @@ Sel.accountSchedule = memo(function(){
   })).sort((x,y) => x.name < y.name ? -1 : 1);
 });
 
+/** これから引き落とされる予定を、カードをまたいで日付順に。
+ *  ホームで「次に何がいくら出ていくか」を見せるため。 */
+Sel.nextPayments = memo(function(limit){
+  const out = [];
+  for (const m of Sel.activeMethods()){
+    if (!m.billing) continue;
+    const sc = Sel.cardSchedule(m.id);
+    if (!sc) continue;
+    for (const g of sc.upcoming){
+      out.push({ payDate:g.payDate, total:g.total, method:m.name,
+                 account: sc.account ? sc.account.name : null, adjusted:g.adjusted });
+    }
+  }
+  out.sort((a,b) => a.payDate < b.payDate ? -1 : a.payDate > b.payDate ? 1 : 0);
+  return out.slice(0, limit || 3);
+});
+
 /** 締め日・支払日の設定を日本語1行で説明する */
 Sel.billingText = function(b){
   if (!b) return "";
@@ -2044,7 +2081,7 @@ View.entrySheet = function(){
 };
 
 /* --- 状況: 内訳 / 予算 / 推移 --- */
-const StatusUI = { month:null, tab:"breakdown" };
+const StatusUI = { month:null, tab:"month", period:"12m" };
 function statusMonth(){
   if (!StatusUI.month){ const n = new Date(); StatusUI.month = monthKeyOf(n.getFullYear(), n.getMonth()+1); }
   return StatusUI.month;
@@ -2056,8 +2093,8 @@ View.status = function(){
   const [y,m] = mk.split("-").map(Number);
   const { expense, income, net, saving, savingRate } = Sel.monthTotals(mk);
 
-  // 年間タブは年単位の話なので、月送りと月の収支は出さない（年送りは本体側にある）
-  const isAnnual = StatusUI.tab === "annual";
+  // 推移の「年」表示は年単位の話なので、月送りと月の収支は出さない（年送りは本体側にある）
+  const isAnnual = StatusUI.tab === "trend" && StatusUI.period === "year";
   const head = html`
     <div class="panel">
       ${isAnnual ? "" : html`
@@ -2076,53 +2113,44 @@ View.status = function(){
                <div class="v" style="color:${net>=0?"var(--accent)":"var(--red)"}">${yen(net)}</div></div>
         </div>`}
       <div class="seg" role="group" aria-label="表示切替" style="${isAnnual ? "" : "margin-top:12px"}">
-        <button data-act="status:tab" data-v="breakdown" aria-pressed="${String(StatusUI.tab==="breakdown")}">内訳</button>
-        <button data-act="status:tab" data-v="budget"    aria-pressed="${String(StatusUI.tab==="budget")}">予算</button>
-        <button data-act="status:tab" data-v="trend"     aria-pressed="${String(StatusUI.tab==="trend")}">推移</button>
-        <button data-act="status:tab" data-v="annual"    aria-pressed="${String(StatusUI.tab==="annual")}">年間</button>
+        <button data-act="status:tab" data-v="month"  aria-pressed="${String(StatusUI.tab==="month")}">今月</button>
+        <button data-act="status:tab" data-v="budget" aria-pressed="${String(StatusUI.tab==="budget")}">予算</button>
+        <button data-act="status:tab" data-v="trend"  aria-pressed="${String(StatusUI.tab==="trend")}">推移</button>
       </div>
     </div>`;
 
   const body = StatusUI.tab === "budget" ? View._budget(mk)
              : StatusUI.tab === "trend"  ? View._trend(mk)
-             : StatusUI.tab === "annual" ? View._annual(mk)
-             : View._breakdown(mk);
+             : View._month(mk);
   mount(host, html`${head}${body}`);
 };
 
-View._breakdown = function(mk){
+View._month = function(mk){
   const { slices, rows, negatives, total, expense } = Sel.breakdown(mk);
   const p = Sel.pace(mk);
   const { savings, saving } = Sel.monthTotals(mk);
   return html`
-    <div class="cols">
+    <div class="cols home">
       <div class="panel">
-        <h2>用途別の内訳</h2>
-        <p class="note">サブスクの発生分も含めて集計しています。行をタップするとその用途だけの履歴を開きます。</p>
-        <div class="donut-wrap">
-          ${Chart.donut(slices, total)}
-          <div class="legend">
-            ${slices.length === 0
-              ? html`<div class="empty" style="padding:18px"><span class="big">🧾</span>この月の支出はまだありません。</div>`
-              : slices.map(s => html`
-                  <button class="legend-row" data-act="status:drill" data-id="${s.id}">
-                    <span class="sw" style="background:${raw(slotVar(s.colorSlot))}"></span>
-                    <span class="nm">${(s.icon ? s.icon+" " : "") + s.name}${s.archived ? html`<span class="tag gray">削除済み</span>` : ""}</span>
-                    <span class="pc">${Math.round(s.value/total*100)}%</span>
-                    <span class="vl">${yen(s.value)}</span>
-                  </button>`)}
-          </div>
-        </div>
-        ${negatives.length
-          ? html`<p class="note" style="margin:12px 0 0">
-              ${negatives.map(n => n.name).join("・")} は立替精算のほうが多く、合計が
-              ${negatives.map(n => yen(n.value)).join("・")} のマイナスです。
-              円グラフは割合を見るものなのでマイナスの分は描けません。
-              差し引いた実際の支出は ${yen(expense)} です。</p>`
-          : ""}
-      </div>
+        ${(() => {
+          const next = Sel.nextPayments(2);
+          if (!next.length) return "";
+          return html`
+            <h2>次の引き落とし</h2>
+            ${next.map((n,i) => html`
+              <button class="pay-row" data-act="go" data-to="schedule" style="border-bottom:${i===next.length-1?"0":"1px solid var(--line)"}">
+                <span class="pay-main">
+                  <span class="pay-date">${jpDate(n.payDate)}
+                    ${i === 0 ? html`<span class="tag">次回</span>` : ""}
+                    ${n.adjusted ? html`<span class="tag gray">休日調整済</span>` : ""}
+                  </span>
+                  <span class="pay-sub">${n.method}${n.account ? " ・ " + n.account : ""}</span>
+                </span>
+                <span class="pay-amt">${yen(n.total)}</span>
+              </button>`)}
+            <p class="note" style="margin:10px 0 18px">「予定」タブで、何を買った分かまで見られます。</p>`;
+        })()}
 
-      <div class="panel">
         <h2>今月のペース</h2>
         ${p.budget > 0
           ? html`
@@ -2153,6 +2181,32 @@ View._breakdown = function(mk){
                 <span class="vl">${yen(savings[c.id])}</span>
               </div>`)}
           </div>` : ""}
+      </div>
+
+      <div class="panel viz">
+        <h2>用途別の内訳</h2>
+        <p class="note">サブスクの発生分も含めて集計しています。行をタップするとその用途だけの履歴を開きます。</p>
+        <div class="donut-wrap">
+          ${Chart.donut(slices, total)}
+          <div class="legend">
+            ${slices.length === 0
+              ? html`<div class="empty" style="padding:18px"><span class="big">🧾</span>この月の支出はまだありません。</div>`
+              : slices.map(s => html`
+                  <button class="legend-row" data-act="status:drill" data-id="${s.id}">
+                    <span class="sw" style="background:${raw(slotVar(s.colorSlot))}"></span>
+                    <span class="nm">${(s.icon ? s.icon+" " : "") + s.name}${s.archived ? html`<span class="tag gray">削除済み</span>` : ""}</span>
+                    <span class="pc">${Math.round(s.value/total*100)}%</span>
+                    <span class="vl">${yen(s.value)}</span>
+                  </button>`)}
+          </div>
+        </div>
+        ${negatives.length
+          ? html`<p class="note" style="margin:12px 0 0">
+              ${negatives.map(n => n.name).join("・")} は立替精算のほうが多く、合計が
+              ${negatives.map(n => yen(n.value)).join("・")} のマイナスです。
+              円グラフは割合を見るものなのでマイナスの分は描けません。
+              差し引いた実際の支出は ${yen(expense)} です。</p>`
+          : ""}
       </div>
     </div>`;
 };
@@ -2209,7 +2263,7 @@ View._annual = function(mk){
 
   return html`
     <div class="panel">
-      <div class="month-switch">
+      <div class="month-switch" style="margin-top:2px">
         <button data-act="status:year" data-d="-1" aria-label="前の年">‹</button>
         <div class="label num">${year}年</div>
         <button data-act="status:year" data-d="1" aria-label="次の年">›</button>
@@ -2252,6 +2306,17 @@ View._annual = function(mk){
 };
 
 View._trend = function(mk){
+  const head = html`
+    <div class="panel" style="padding:12px 14px">
+      <div class="seg" role="group" aria-label="期間">
+        <button data-act="status:period" data-v="12m"  aria-pressed="${String(StatusUI.period!=="year")}">直近12ヶ月</button>
+        <button data-act="status:period" data-v="year" aria-pressed="${String(StatusUI.period==="year")}">年ごと</button>
+      </div>
+    </div>`;
+  return html`${head}${StatusUI.period === "year" ? View._annual(mk) : View._trend12(mk)}`;
+};
+
+View._trend12 = function(mk){
   const data = Sel.trend(mk, 12);
   const spent = data.map(d => d.expense).filter(v => v > 0);
   const avg = spent.length ? spent.reduce((a,b)=>a+b,0) / spent.length : 0;
@@ -2695,22 +2760,19 @@ View.schedule = function(){
 };
 
 /* --- 設定 --- */
-const SettingsUI = { tab:"methods" };
+const SettingsUI = { tab:"methods", openHolidays:false };
 
 View.settings = function(){
   const host = $('[data-route="settings"]');
-  const tabs = [["methods","支払方法"],["subs","定期・積立"],["cats","用途"],
-                ["holidays","祝日"],["analysis","節約診断"],["other","その他"]];
+  const tabs = [["methods","支払方法"],["subs","定期・積立"],["cats","用途"],["other","その他"]];
   mount(host, html`
     <div class="subtabs">
       ${tabs.map(([k,label]) => html`<button data-act="set:tab" data-v="${k}" aria-pressed="${String(SettingsUI.tab===k)}">${label}</button>`)}
     </div>
-    ${SettingsUI.tab === "methods"  ? View._methods()
-    : SettingsUI.tab === "subs"     ? View._subs()
-    : SettingsUI.tab === "cats"     ? View._cats()
-    : SettingsUI.tab === "holidays" ? View._holidays()
-    : SettingsUI.tab === "analysis" ? View._analysis()
-    :                                 View._other()}`);
+    ${SettingsUI.tab === "methods" ? View._methods()
+    : SettingsUI.tab === "subs"    ? View._subs()
+    : SettingsUI.tab === "cats"    ? View._cats()
+    :                                View._other()}`);
 };
 
 /* 支払方法（カードは「締め日を持つ支払方法」として統合してある。
@@ -2751,7 +2813,14 @@ View._methods = function(){
               </div>
             </div>`)}
       <div class="btn-row"><button class="btn ghost small" data-act="acc:new">＋ 口座を追加</button></div>
-    </div>`;
+    </div>
+
+    ${/* 祝日はカードの引き落としが土日祝に当たったときの調整にしか使わないので、
+          独立したタブではなく支払方法の下に畳んでおく */""}
+    <details class="fold"${SettingsUI.openHolidays ? " open" : ""}>
+      <summary>祝日・休業日の設定</summary>
+      ${View._holidays()}
+    </details>`;
 };
 
 /* サブスク。v1では「有効」以外は全部同じ扱いで、一時停止も解約予定も黙って無視
@@ -2846,8 +2915,7 @@ View._holidays = function(){
   const manual = keys.filter(k => H[k] && H[k].source === "manual").length;
 
   return html`
-    <div class="panel">
-      <h2>祝日・休業日</h2>
+    <div class="panel" style="margin-top:10px">
       <p class="note">カードの引き落としが土日祝にあたったときの調整に使います。日本の祝日はまとめて取得でき、会社の休業日などは手で足せます。手で足した分は、取得し直しても消えません。</p>
       <div class="btn-row" style="margin-top:0">
         <button class="btn" data-act="hol:fetch">🌐 日本の祝日を取得</button>
@@ -2918,6 +2986,8 @@ View._other = function(){
   const rep = s.meta.migrationReport;
 
   return html`
+    ${View._analysis()}
+
     <div class="panel">
       <h2>表示</h2>
       <div class="seg" role="group" aria-label="テーマ">
@@ -2969,13 +3039,6 @@ View._other = function(){
       </div>
     </div>
 
-    <div class="panel">
-      <div class="soon">
-        <span class="big">⚙️</span>
-        <div class="ph">祝日データ・節約診断・CSV出力</div>
-        <div class="ph2">Phase 4 で実装します。</div>
-      </div>
-    </div>
   `;
 };
 
@@ -3123,7 +3186,8 @@ const Actions = {
     View.status();
   },
   "status:tab"({v}){ StatusUI.tab = v; View.status(); },
-  "status:gomonth"({mk}){ StatusUI.month = mk; StatusUI.tab = "breakdown"; View.status(); },
+  "status:period"({v}){ StatusUI.period = v; View.status(); },
+  "status:gomonth"({mk}){ StatusUI.month = mk; StatusUI.tab = "month"; StatusUI.period = "12m"; View.status(); },
   /** 用途をタップ → その用途に絞った履歴へ */
   "status:drill"({id}){
     if (!id || id === "__other"){ StatusUI.tab = "budget"; View.status(); return; }
@@ -4816,6 +4880,11 @@ document.addEventListener("input", e => {
 
 /* 予算欄は blur（change）で確定させる。入力中に再描画すると
    カーソルが飛ぶので、ビュー側も deferIfFocused で守っている。 */
+document.addEventListener("toggle", e => {
+  // 描き直しで折りたたみが閉じないように状態を覚えておく
+  if (e.target.classList && e.target.classList.contains("fold")) SettingsUI.openHolidays = e.target.open;
+}, true);
+
 document.addEventListener("change", e => {
   // 締め日/支払日の種類を変えると入力欄の構成が変わるので組み替える
   if (e.target.id === "mf-closetype" || e.target.id === "mf-paydaytype"){
@@ -4838,6 +4907,11 @@ document.addEventListener("change", e => {
 
 /* バックアップの読み込み。壊れたファイルで家計簿が消えないよう、
    検証 → スナップショット → 差し替え → 報告（取り消し付き）の順で進める。 */
+document.addEventListener("toggle", e => {
+  // 描き直しで折りたたみが閉じないように状態を覚えておく
+  if (e.target.classList && e.target.classList.contains("fold")) SettingsUI.openHolidays = e.target.open;
+}, true);
+
 document.addEventListener("change", e => {
   if (e.target.id !== "io-import") return;
   const file = e.target.files && e.target.files[0];
