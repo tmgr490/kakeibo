@@ -570,6 +570,11 @@ try{
   }
   .subtabs button[aria-pressed="true"]{ background:var(--accent); border-color:var(--accent); color:#fff; }
 
+  /* --- 頻度の指定（n ごと） --- */
+  .freq{ display:flex; gap:8px; align-items:center; }
+  .freq input{ width:84px; text-align:center; font-weight:800; }
+  .freq select{ flex:1; min-width:0; }
+
   /* --- チェックボックス --- */
   .chk{ display:flex; gap:10px; align-items:flex-start; margin:12px 0 4px; cursor:pointer; }
   .chk input{ width:20px; height:20px; margin:1px 0 0; flex:0 0 auto; accent-color:var(--accent); }
@@ -902,6 +907,7 @@ function v1_to_v2(v1){
       methodId: ensureMth(x.method),
       categoryId: CAT_SUB,
       entryType: "expense",
+      every: 1,
       interval: INTERVALS.includes(x.interval) ? x.interval : "月次",
       start: x.start || todayStr(),
       end: null,
@@ -1019,6 +1025,7 @@ function validate(input){
   S.subscriptions.forEach(x => {
     if (!SUB_STATUS.includes(x.status)) x.status = "停止";
     if (x.entryType !== "transfer") x.entryType = "expense";
+    x.every = Math.min(60, Math.max(1, Math.round(Number(x.every) || 1)));
     // 状態と合わない日付が残っていると、画面に出ないまま発生が止まる
     if (x.status !== "解約予定") x.end = null;
     if (x.status !== "一時停止"){ x.pauseFrom = null; x.pauseTo = null; }
@@ -1220,25 +1227,32 @@ Sel.subOccurrences = function(sub, from, to){
     out.push({ date: new Date(d), amount: ov === undefined ? sub.amount : Number(ov) });
   };
 
+  // 「2週間おき」「3ヶ月おき」のように間隔を空けられる（Amazonの定期便など）。
+  // every は 1 なら毎回、2 なら1回飛ばし。開始日を起点に数えるので、
+  // 途中の月を跨いでも周期がずれない。
+  const every = Math.max(1, Math.round(Number(sub.every) || 1));
+
   if (sub.interval === "週次"){
-    const step = 7 * 86400000;
+    const step = 7 * every * 86400000;
     let k = Math.max(0, Math.ceil((from - start) / step));
-    let d = new Date(start); d.setDate(d.getDate() + k*7);
+    let d = new Date(start); d.setDate(d.getDate() + k*7*every);
     let guard = 0;
-    while (d <= limit && guard++ < 600){ push(d); d = new Date(d); d.setDate(d.getDate()+7); }
+    while (d <= limit && guard++ < 600){ push(d); d = new Date(d); d.setDate(d.getDate()+7*every); }
   } else if (sub.interval === "年次"){
-    let y = Math.max(start.getFullYear(), from.getFullYear());
+    let y = start.getFullYear();
+    if (from.getFullYear() > y) y += Math.floor((from.getFullYear() - y) / every) * every;
     let guard = 0;
     while (guard++ < 200){
       const mm = start.getMonth()+1;
       const d = new Date(y, mm-1, Math.min(start.getDate(), monthEndDay(y,mm)));
       if (d > limit) break;
       if (d >= start) push(d);
-      y++;
+      y += every;
     }
   } else {                                                  // 月次
     const sy = start.getFullYear(), sm = start.getMonth()+1;
-    let k = Math.max(0, (from.getFullYear()-sy)*12 + (from.getMonth()+1-sm) - 1);
+    const diff = (from.getFullYear()-sy)*12 + (from.getMonth()+1-sm) - 1;
+    let k = Math.max(0, Math.floor(diff / every) * every);
     let guard = 0;
     while (guard++ < 900){
       const [y,m] = addMonths(sy, sm, k);
@@ -1246,10 +1260,18 @@ Sel.subOccurrences = function(sub, from, to){
       const d = new Date(y, m-1, Math.min(start.getDate(), monthEndDay(y,m)));
       if (d > limit) break;
       if (d >= start) push(d);
-      k++;
+      k += every;
     }
   }
   return out;
+};
+
+/** 頻度の日本語表記。「毎月」「2ヶ月ごと」「3週間ごと」など。 */
+Sel.intervalText = sub => {
+  const n = Math.max(1, Math.round(Number(sub && sub.every) || 1));
+  const unit = sub && sub.interval === "週次" ? "週間" : sub && sub.interval === "年次" ? "年" : "ヶ月";
+  if (n === 1) return unit === "週間" ? "毎週" : unit === "年" ? "毎年" : "毎月";
+  return n + unit + "ごと";
 };
 
 /** 実取引 ＋ サブスク展開を統合した「唯一のストリーム」。
@@ -1523,9 +1545,10 @@ Sel.annual = memo(function(year){
 Sel.monthlyEquivalent = sub => {
   if (!sub || sub.status === "停止" || sub.status === "解約済み") return 0;
   const a = Number(sub.amount) || 0;
-  if (sub.interval === "週次") return a * 52 / 12;
-  if (sub.interval === "年次") return a / 12;
-  return a;
+  const every = Math.max(1, Math.round(Number(sub.every) || 1));
+  if (sub.interval === "週次") return a * 52 / 12 / every;
+  if (sub.interval === "年次") return a / 12 / every;
+  return a / every;
 };
 
 /** 定期の月あたり合計。支出と貯蓄は意味が違うので分けて返す。 */
@@ -1851,18 +1874,19 @@ const MethodForm = {
 /* --- サブスクの編集フォーム --- */
 const SubForm = {
   id:null, name:"", amount:"", methodId:null, categoryId:CAT_SUB, entryType:"expense",
-  interval:"月次", start:"", end:"", status:"有効", pauseFrom:"", pauseTo:"", memo:"",
+  interval:"月次", every:1, start:"", end:"", status:"有効", pauseFrom:"", pauseTo:"", memo:"",
   reset(){
     const m = Sel.activeMethods()[0];
     Object.assign(this, { id:null, name:"", amount:"", methodId: m ? m.id : null,
-      categoryId:CAT_SUB, entryType:"expense", interval:"月次", start:todayStr(), end:"",
+      categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:1, start:todayStr(), end:"",
       status:"有効", pauseFrom:"", pauseTo:"", memo:"" });
   },
   load(x){
     const et = x.entryType === "transfer" ? "transfer" : "expense";
     Object.assign(this, { id:x.id, name:x.name, amount:String(x.amount), methodId:x.methodId,
       categoryId:x.categoryId || (et === "transfer" ? CAT_SAVING : CAT_SUB),
-      entryType:et, interval:x.interval, start:x.start, end:x.end || "",
+      entryType:et, interval:x.interval, every: Math.max(1, Number(x.every) || 1),
+      start:x.start, end:x.end || "",
       status:x.status, pauseFrom:x.pauseFrom || "", pauseTo:x.pauseTo || "", memo:x.memo || "" });
   },
   read(){
@@ -1871,6 +1895,8 @@ const SubForm = {
       const v = g("sf-" + k.toLowerCase());
       if (v != null) this[k] = v;
     });
+    const ev = g("sf-every"); if (ev != null && ev !== "") this.every = Math.min(60, Math.max(1, Math.round(Number(ev) || 1)));
+    const un = g("sf-unit");  if (un != null) this.interval = un;
   },
   save(){
     this.read();
@@ -1884,7 +1910,8 @@ const SubForm = {
     const payload = {
       name:this.name.trim(), amount, methodId:this.methodId, categoryId:this.categoryId,
       entryType:this.entryType,
-      interval:this.interval, start:this.start, status:this.status,
+      interval:this.interval, every: Math.min(60, Math.max(1, Math.round(Number(this.every) || 1))),
+      start:this.start, status:this.status,
       end: this.status === "解約予定" ? (this.end || null) : null,
       pauseFrom: this.status === "一時停止" ? (this.pauseFrom || null) : null,
       pauseTo:   this.status === "一時停止" ? (this.pauseTo   || null) : null,
@@ -2513,9 +2540,24 @@ View.subForm = function(){
     </div>
 
     <div class="note" style="margin:12px 0 4px">頻度</div>
-    <div class="chip-row">
-      ${INTERVALS.map(v => html`<button class="chip" data-act="sub:interval" data-v="${v}" aria-pressed="${String(F.interval===v)}">${v}</button>`)}
+    <div class="freq">
+      <input type="number" id="sf-every" min="1" max="60" inputmode="numeric" value="${F.every}" aria-label="間隔">
+      <select id="sf-unit" aria-label="単位">
+        <option value="週次" ${F.interval==="週次"?"selected":""}>週間ごと</option>
+        <option value="月次" ${F.interval==="月次"?"selected":""}>ヶ月ごと</option>
+        <option value="年次" ${F.interval==="年次"?"selected":""}>年ごと</option>
+      </select>
     </div>
+    <div class="chip-row" style="margin-top:7px">
+      ${[["月次",1,"毎月"],["週次",1,"毎週"],["週次",2,"2週間ごと"],["月次",2,"2ヶ月ごと"],
+         ["月次",3,"3ヶ月ごと"],["月次",6,"半年ごと"],["年次",1,"毎年"]].map(([iv,n,label]) =>
+        html`<button class="chip" data-act="sub:freq" data-iv="${iv}" data-n="${n}"
+               aria-pressed="${String(F.interval===iv && Number(F.every)===n)}">${label}</button>`)}
+    </div>
+    <p class="note" style="margin:8px 0 0">
+      ${Sel.intervalText({interval:F.interval, every:F.every})}に発生します${
+        F.start ? "。開始日を起点に数えるので、月をまたいでも周期はずれません" : ""}。
+    </p>
 
     <div class="note" style="margin-bottom:4px">支払方法</div>
     <div class="chip-row">
@@ -2741,7 +2783,7 @@ View._subs = function(){
               <div class="item">
                 <div class="body">
                   <div class="t1">${x.name} ${badge(x)}${x.entryType === "transfer" ? html`<span class="tag" style="background:var(--surface-2);color:var(--s7)">積立</span>` : ""}</div>
-                  <div class="t2">${x.interval} ・ ${Sel.mth(x.methodId).name} ・ ${Sel.cat(x.categoryId).name}${
+                  <div class="t2">${Sel.intervalText(x)} ・ ${Sel.mth(x.methodId).name} ・ ${Sel.cat(x.categoryId).name}${
                     nx ? "　次回 " + jpDate(nx)
                        : x.status === "有効" ? "　次回の予定なし" : ""}${
                     x.status === "一時停止" && x.pauseFrom ? "　停止 " + x.pauseFrom + (x.pauseTo ? " 〜 " + x.pauseTo : " 〜") : ""}${
@@ -3179,7 +3221,7 @@ const Actions = {
     View.subForm();
   },
   "sub:status"({v}){ SubForm.read(); SubForm.status = v; View.subForm(); },
-  "sub:interval"({v}){ SubForm.read(); SubForm.interval = v; View.subForm(); },
+  "sub:freq"({iv,n}){ SubForm.read(); SubForm.interval = iv; SubForm.every = Number(n); View.subForm(); },
   "sub:mth"({id}){ SubForm.read(); SubForm.methodId = id; View.subForm(); },
   "sub:cat"({id}){ SubForm.read(); SubForm.categoryId = id; View.subForm(); },
   "sub:save"(){ SubForm.save(); },
@@ -3491,7 +3533,7 @@ function buildAnalysisText(months, includeRows){
   const subs = Store.state.subscriptions.filter(x => x.status === "有効" || x.status === "解約予定");
   if (subs.length){
     L.push("■ サブスク・固定費");
-    subs.forEach(x => L.push(`${x.name}  ${x.amount.toLocaleString("ja-JP")}（${x.interval} / 月あたり ${Math.round(Sel.monthlyEquivalent(x)).toLocaleString("ja-JP")}）${x.status === "解約予定" ? " ※解約予定" : ""}`));
+    subs.forEach(x => L.push(`${x.name}  ${x.amount.toLocaleString("ja-JP")}（${Sel.intervalText(x)} / 月あたり ${Math.round(Sel.monthlyEquivalent(x)).toLocaleString("ja-JP")}）${x.status === "解約予定" ? " ※解約予定" : ""}`));
     L.push(`月あたり合計 ${Math.round(subs.reduce((a,x)=>a+Sel.monthlyEquivalent(x),0)).toLocaleString("ja-JP")}`);
     L.push("");
   }
@@ -4508,10 +4550,96 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S16 何週間おき・何ヶ月おき ---------------- */
+  function s16(){
+    g("S16 間隔を空けた定期");
+    withState(seedState(), () => {
+      const mk = o => Object.assign({ id:"sx", name:"x", amount:1000, methodId:null,
+        categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:1,
+        start:"2026-01-10", end:null, status:"有効", pauseFrom:null, pauseTo:null }, o||{});
+      const dates = (o, f, t) => Sel.subOccurrences(mk(o), parseDate(f), parseDate(t)).map(x => fmt(x.date));
+
+      eq("2週間ごと", dates({interval:"週次", every:2, start:"2026-01-01"}, "2026-01-01","2026-02-28"),
+         ["2026-01-01","2026-01-15","2026-01-29","2026-02-12","2026-02-26"]);
+      eq("3週間ごと", dates({interval:"週次", every:3, start:"2026-01-01"}, "2026-01-01","2026-03-01"),
+         ["2026-01-01","2026-01-22","2026-02-12"]);
+      eq("2ヶ月ごと", dates({every:2}, "2026-01-01","2026-08-31"),
+         ["2026-01-10","2026-03-10","2026-05-10","2026-07-10"]);
+      eq("3ヶ月ごと", dates({every:3}, "2026-01-01","2026-12-31"),
+         ["2026-01-10","2026-04-10","2026-07-10","2026-10-10"]);
+      eq("半年ごと",  dates({every:6}, "2026-01-01","2027-06-30"),
+         ["2026-01-10","2026-07-10","2027-01-10"]);
+      eq("2年ごと",   dates({interval:"年次", every:2}, "2026-01-01","2031-12-31"),
+         ["2026-01-10","2028-01-10","2030-01-10"]);
+
+      // ★ 途中の月から見ても周期がずれない（開始日が起点であること）
+      eq("途中の月から見ても周期が保たれる", dates({every:3}, "2026-06-01","2026-12-31"),
+         ["2026-07-10","2026-10-10"]);
+      eq("週次も途中から見てずれない",
+         dates({interval:"週次", every:2, start:"2026-01-01"}, "2026-02-01","2026-02-28"),
+         ["2026-02-12","2026-02-26"]);
+
+      // 月末クランプも間隔と両立する
+      eq("31日開始の2ヶ月ごと", dates({every:2, start:"2026-01-31"}, "2026-01-01","2026-07-31"),
+         ["2026-01-31","2026-03-31","2026-05-31","2026-07-31"]);
+
+      // 間隔が無い（毎回）は今までと同じ
+      eq("everyなしは毎月", dates({every:undefined}, "2026-01-01","2026-04-30"),
+         ["2026-01-10","2026-02-10","2026-03-10","2026-04-10"]);
+      eq("every=1 も毎月", dates({every:1}, "2026-01-01","2026-04-30"),
+         ["2026-01-10","2026-02-10","2026-03-10","2026-04-10"]);
+
+      // 一時停止・解約予定とも両立する
+      eq("2ヶ月ごとの一時停止",
+         dates({every:2, status:"一時停止", pauseFrom:"2026-03-01", pauseTo:"2026-05-31"},
+               "2026-01-01","2026-08-31"),
+         ["2026-01-10","2026-07-10"]);
+      eq("2ヶ月ごとの解約予定",
+         dates({every:2, status:"解約予定", end:"2026-06-01"}, "2026-01-01","2026-12-31"),
+         ["2026-01-10","2026-03-10","2026-05-10"]);
+    });
+
+    g("S16b 間隔つきの月あたり換算");
+    const M = (o) => Sel.monthlyEquivalent(Object.assign({ amount:1200, interval:"月次",
+      every:1, status:"有効" }, o));
+    eq("毎月",        Math.round(M({})), 1200);
+    eq("2ヶ月ごと",   Math.round(M({every:2})), 600);
+    eq("3ヶ月ごと",   Math.round(M({every:3})), 400);
+    eq("毎週",        Math.round(M({interval:"週次"})), Math.round(1200*52/12));
+    eq("2週間ごと",   Math.round(M({interval:"週次", every:2})), Math.round(1200*52/12/2));
+    eq("毎年",        Math.round(M({interval:"年次"})), 100);
+    eq("2年ごと",     Math.round(M({interval:"年次", every:2})), 50);
+
+    g("S16c 頻度の表記");
+    const IT = (interval, every) => Sel.intervalText({interval, every});
+    eq("毎月",        IT("月次",1), "毎月");
+    eq("2ヶ月ごと",   IT("月次",2), "2ヶ月ごと");
+    eq("毎週",        IT("週次",1), "毎週");
+    eq("3週間ごと",   IT("週次",3), "3週間ごと");
+    eq("毎年",        IT("年次",1), "毎年");
+    eq("2年ごと",     IT("年次",2), "2年ごと");
+    eq("未指定は毎月", IT("月次",undefined), "毎月");
+
+    g("S16d 間隔の検証");
+    const s = seedState();
+    s.subscriptions.push({ id:"a", name:"x", amount:100, methodId:s.methods[0].id,
+      categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:0,
+      start:"2026-01-01", end:null, status:"有効", pauseFrom:null, pauseTo:null, memo:"" });
+    s.subscriptions.push({ id:"b", name:"y", amount:100, methodId:s.methods[0].id,
+      categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:999,
+      start:"2026-01-01", end:null, status:"有効", pauseFrom:null, pauseTo:null, memo:"" });
+    const v = validate(s).state;
+    eq("0 は 1 に直る",    v.subscriptions[0].every, 1);
+    eq("大きすぎる値は上限に", v.subscriptions[1].every, 60);
+    // v1 から移行したものは毎回
+    ok("v1移行はすべて every=1",
+       migrate(JSON.parse(JSON.stringify(V1_FIXTURE))).subscriptions.every(x => x.every === 1));
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -4692,6 +4820,9 @@ document.addEventListener("change", e => {
   // 締め日/支払日の種類を変えると入力欄の構成が変わるので組み替える
   if (e.target.id === "mf-closetype" || e.target.id === "mf-paydaytype"){
     MethodForm.read(); View.methodForm(); return;
+  }
+  if (e.target.id === "sf-unit" || e.target.id === "sf-every"){
+    SubForm.read(); View.subForm(); return;
   }
   const catId = e.target.dataset && e.target.dataset.budgetCat;
   if (!catId) return;
