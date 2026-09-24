@@ -610,6 +610,8 @@ try{
   .item .body{ flex:1; min-width:0; }
   .item .t1{ font-size:13.5px; font-weight:700; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
   .item .t2{ font-size:11px; color:var(--ink-soft); margin-top:3px; }
+  .item .t3{ font-size:11px; font-weight:700; color:var(--accent); margin-top:3px; }
+  .item .t3.off{ color:var(--ink-faint); font-weight:400; }
   .item .amt{ font-size:14px; font-weight:800; font-variant-numeric:tabular-nums; flex:0 0 auto; }
   .item .acts{ display:flex; gap:5px; flex:0 0 auto; }
   .icon-sm{
@@ -1571,7 +1573,8 @@ Sel.monthlyEquivalent = sub => {
   return a / every;
 };
 
-/** 定期の月あたり合計。支出と貯蓄は意味が違うので分けて返す。 */
+/** 定期の「ならすと月いくら」。3ヶ月ごとなら1/3が毎月の扱いになる。
+ *  長い目で見た負担を知るための数字で、その月に実際に引かれる額ではない。 */
 Sel.subMonthlyTotals = () => {
   let expense = 0, saving = 0;
   Store.state.subscriptions.forEach(x => {
@@ -1580,6 +1583,26 @@ Sel.subMonthlyTotals = () => {
   });
   return { expense, saving, total: expense + saving };
 };
+
+/** 定期の「その月に実際に発生する額」。
+ *  2ヶ月ごとの支払いは、発生する月だけ満額が乗り、来ない月は0になる。
+ *  ならした平均と混同すると「今月いくら引かれるか」を読み誤るので分けている。 */
+Sel.subMonthActual = memo(function(monthKey){
+  const [a,b] = monthRange(monthKey);
+  const byId = new Map();
+  let expense = 0, saving = 0;
+  for (const e of Sel.entriesInRange(a,b)){
+    if (e.source !== "sub") continue;
+    if (e.type === "transfer") saving += e.amount; else expense += e.amount;
+    const cur = byId.get(e.id) || { id:e.id, name:e.label, type:e.type, count:0, total:0, dates:[] };
+    cur.count++; cur.total += e.amount; cur.dates.push(e.date);
+    byId.set(e.id, cur);
+  }
+  const items = Array.from(byId.values());
+  items.forEach(i => i.dates.sort());
+  return { expense, saving, total: expense + saving, items,
+           byId: id => byId.get(id) || null };
+});
 
 /** カード（＝締め日を持つ支払方法）の支払予定。
  *  実取引とサブスク発生分をまとめて、それぞれの支払日で束ねる。 */
@@ -2827,7 +2850,11 @@ View._methods = function(){
    されていた。ここでは4状態それぞれに意味を持たせている。 */
 View._subs = function(){
   const subs = Store.state.subscriptions;
-  const mt = Sel.subMonthlyTotals();
+  const mt = Sel.subMonthlyTotals();                 // ならした平均
+  const now = new Date();
+  const curMk = monthKeyOf(now.getFullYear(), now.getMonth()+1);
+  const act = Sel.subMonthActual(curMk);             // その月に実際に発生する額
+  const curLabel = (now.getMonth()+1) + "月";
 
   const badge = x =>
     x.status === "有効"     ? html`<span class="tag">有効</span>`
@@ -2857,6 +2884,12 @@ View._subs = function(){
                        : x.status === "有効" ? "　次回の予定なし" : ""}${
                     x.status === "一時停止" && x.pauseFrom ? "　停止 " + x.pauseFrom + (x.pauseTo ? " 〜 " + x.pauseTo : " 〜") : ""}${
                     x.status === "解約予定" && x.end ? "　" + x.end + " まで" : ""}</div>
+                  ${(() => {
+                    const a = act.byId(x.id);
+                    if (a) return html`<div class="t3">${curLabel}は ${a.count > 1 ? a.count + "回 " : ""}${yen(a.total)}（${a.dates.map(d => d.slice(5).replace("-","/")).join("・")}）</div>`;
+                    if (x.status === "停止") return "";
+                    return html`<div class="t3 off">${curLabel}は発生しません</div>`;
+                  })()}
                 </div>
                 <div class="amt">${yen(x.amount)}</div>
                 <div class="acts">
@@ -2866,14 +2899,18 @@ View._subs = function(){
               </div>`;
           })}
       <div class="total-box">
-        <div class="lbl">月あたりの支払い（週次・年次も換算）</div>
-        <div class="val">${yen(mt.expense)}</div>
+        <div class="lbl">${curLabel}に発生する支払い</div>
+        <div class="val">${yen(act.expense)}</div>
       </div>
-      ${mt.saving > 0 ? html`
+      ${act.saving > 0 || mt.saving > 0 ? html`
         <div class="total-box" style="background:var(--surface-2);color:var(--s7)">
-          <div class="lbl">月あたりの積立</div>
-          <div class="val">${yen(mt.saving)}</div>
+          <div class="lbl">${curLabel}に発生する積立</div>
+          <div class="val">${yen(act.saving)}</div>
         </div>` : ""}
+      <p class="note" style="margin:10px 0 0">
+        間隔を空けたものは、発生する月だけ満額が入ります。<br>
+        長い目でならすと、支払い 月${yen(mt.expense)}${mt.saving > 0 ? " ／ 積立 月" + yen(mt.saving) : ""} 相当です。
+      </p>
       <div class="btn-row"><button class="btn" data-act="sub:new">＋ 定期を追加</button></div>
     </div>`;
 };
@@ -3597,8 +3634,8 @@ function buildAnalysisText(months, includeRows){
   const subs = Store.state.subscriptions.filter(x => x.status === "有効" || x.status === "解約予定");
   if (subs.length){
     L.push("■ サブスク・固定費");
-    subs.forEach(x => L.push(`${x.name}  ${x.amount.toLocaleString("ja-JP")}（${Sel.intervalText(x)} / 月あたり ${Math.round(Sel.monthlyEquivalent(x)).toLocaleString("ja-JP")}）${x.status === "解約予定" ? " ※解約予定" : ""}`));
-    L.push(`月あたり合計 ${Math.round(subs.reduce((a,x)=>a+Sel.monthlyEquivalent(x),0)).toLocaleString("ja-JP")}`);
+    subs.forEach(x => L.push(`${x.name}  ${x.amount.toLocaleString("ja-JP")}（${Sel.intervalText(x)} / ならすと月 ${Math.round(Sel.monthlyEquivalent(x)).toLocaleString("ja-JP")}）${x.status === "解約予定" ? " ※解約予定" : ""}`));
+    L.push(`ならすと月あたり合計 ${Math.round(subs.reduce((a,x)=>a+Sel.monthlyEquivalent(x),0)).toLocaleString("ja-JP")}`);
     L.push("");
   }
 
@@ -4700,10 +4737,84 @@ const Test = (function(){
        migrate(JSON.parse(JSON.stringify(V1_FIXTURE))).subscriptions.every(x => x.every === 1));
   }
 
+  /* ---------------- S17 その月の実額 と ならした平均 ---------------- */
+  function s17(){
+    g("S17 その月に実際に発生する額");
+    const s = seedState();
+    const m0 = s.methods[0].id;
+    const sub = (id, name, amount, interval, every, start, extra) =>
+      Object.assign({ id, name, amount, methodId:m0, categoryId:CAT_SUB, entryType:"expense",
+        interval, every, start, end:null, status:"有効", pauseFrom:null, pauseTo:null, memo:"" }, extra||{});
+    s.subscriptions.push(
+      sub("m",  "毎月のもの",   1000, "月次", 1, "2026-01-10"),
+      // 3ヶ月ごと: 1・4・7・10月に発生する
+      sub("q",  "3ヶ月ごと",    3000, "月次", 3, "2026-01-20"),
+      // 7週間ごと: 起点から49日おき
+      sub("w7", "7週間ごと",    2100, "週次", 7, "2026-01-05"),
+      sub("nz", "積立",        10000, "月次", 1, "2026-01-15", { entryType:"transfer", categoryId:CAT_SAVING })
+    );
+    withState(s, () => {
+      // 1月: 毎月 + 3ヶ月ごと + 7週間ごと(1/5) が重なる
+      const jan = Sel.subMonthActual("2026-01");
+      eq("1月の支払い", jan.expense, 1000 + 3000 + 2100);
+      eq("1月の積立",   jan.saving, 10000);
+
+      // ★ 2月: 3ヶ月ごとは来ない。満額が乗らないこと
+      const feb = Sel.subMonthActual("2026-02");
+      eq("2月の支払いに3ヶ月ごとは入らない", feb.expense, 1000 + 2100);  // 2/23 に7週間ごと
+      ok("2月に3ヶ月ごとの記録は無い", !feb.byId("q"));
+
+      // 3月: 毎月だけ（7週間ごとは 2/23 の次が 4/13）
+      eq("3月の支払い", Sel.subMonthActual("2026-03").expense, 1000);
+
+      // 4月: 毎月 + 3ヶ月ごと + 7週間ごと
+      const apr = Sel.subMonthActual("2026-04");
+      eq("4月の支払い", apr.expense, 1000 + 3000 + 2100);
+      eq("4月は3ヶ月ごとが満額", apr.byId("q").total, 3000);
+
+      // ★ ならした平均は別の数字であること（混同しないための確認）
+      const avg = Sel.subMonthlyTotals();
+      eq("ならすと3ヶ月ごとは1/3", Math.round(Sel.monthlyEquivalent(sub("q","",3000,"月次",3,"2026-01-20"))), 1000);
+      ok("実額と平均は一致しない", Math.round(avg.expense) !== Math.round(feb.expense),
+         { 平均:Math.round(avg.expense), 二月の実額:feb.expense }, "違う値");
+
+      // 同じ月に2回発生する場合はまとめて数える
+      const twice = Sel.subMonthActual("2026-01").byId("w7");
+      eq("1月の7週間ごとは1回", twice.count, 1);
+      const s2 = seedState();
+      s2.subscriptions.push(sub("w2","2週間ごと",500,"週次",2,"2026-03-02"));
+      withState(s2, () => {
+        const mar = Sel.subMonthActual("2026-03");
+        eq("3月に2週間ごとが3回", mar.byId("w2").count, 3);       // 3/2, 3/16, 3/30
+        eq("3回ぶん合計される",   mar.expense, 1500);
+      });
+    });
+
+    g("S17b 停止・解約予定は実額に出ない");
+    const st = seedState();
+    st.subscriptions.push(
+      Object.assign({}, { id:"p", name:"一時停止", amount:800, methodId:st.methods[0].id,
+        categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:1, start:"2026-01-10",
+        end:null, status:"一時停止", pauseFrom:"2026-02-01", pauseTo:"2026-02-28", memo:"" }),
+      Object.assign({}, { id:"e", name:"解約予定", amount:900, methodId:st.methods[0].id,
+        categoryId:CAT_SUB, entryType:"expense", interval:"月次", every:1, start:"2026-01-10",
+        end:"2026-02-15", status:"解約予定", pauseFrom:null, pauseTo:null, memo:"" })
+    );
+    withState(validate(st).state, () => {
+      eq("1月は両方出る", Sel.subMonthActual("2026-01").expense, 800 + 900);
+      // 2月: 一時停止は飛び、解約予定は 2/10 が end(2/15) より前なので出る
+      eq("2月は一時停止ぶんが消える", Sel.subMonthActual("2026-02").expense, 900);
+      // 3月: 一時停止は期間を過ぎたので復活し、解約予定は end を過ぎたので出ない
+      eq("3月は一時停止が復活する",   Sel.subMonthActual("2026-03").expense, 800);
+      ok("3月に解約予定は出ない",    !Sel.subMonthActual("2026-03").byId("e"));
+      ok("3月に一時停止は出る",       !!Sel.subMonthActual("2026-03").byId("p"));
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16,s17].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
