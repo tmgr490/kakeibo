@@ -241,6 +241,8 @@ try{
     border-radius:11px; background:var(--surface); color:var(--ink); width:100%; min-width:0;
     transition:border-color .18s var(--ease-out), box-shadow .18s var(--ease-out);
   }
+  /* プルダウンは指で押すものなので、タップ領域を確保する */
+  select{ min-height:var(--tap); }
   input:focus,select:focus,textarea:focus{
     outline:none; border-color:var(--accent); box-shadow:0 0 0 3.5px color-mix(in srgb, var(--accent) 20%, transparent);
   }
@@ -333,7 +335,7 @@ try{
   .sum3 .v.ex{ color:var(--red); } .sum3 .v.in{ color:var(--accent); }
   .sum3 .v.sv{ color:var(--s7); }
   .sum3 .sub-k{ display:block; font-size:10.5px; font-weight:600; color:var(--ink-faint); margin-top:2px; }
-  .row .amt.sv, .amount-display .val.sv{ color:var(--s7); }
+  .row .amt.sv, .amount-field input.sv{ color:var(--s7); }
   /* 種別が4つになると窮屈なので、狭い画面では文字を詰める */
   .seg4 button{ padding:9px 2px; font-size:11.5px; }
   @media (min-width: 420px){ .seg4 button{ font-size:12.5px; padding:9px 6px; } }
@@ -351,8 +353,8 @@ try{
   }
   dialog.sheet::backdrop{ background:rgba(0,0,0,.4); backdrop-filter:blur(2px); }
   dialog.sheet .sheet-in{ padding:8px 16px calc(16px + var(--safe-b)); max-height:92dvh; overflow-y:auto; }
-  /* 入力シートは、テンキーを下に固定して、それ以外を上でスクロールさせる。
-     金額の表示だけはテンキーのすぐ上に置く（打っている数字が見えないと困るため）。 */
+  /* 入力シートは、保存ボタンを下に固定して、それ以外を上でスクロールさせる。
+     入力欄が増えても、保存が画面外に流れていかないようにするため。 */
   dialog.sheet .sheet-in.split{ display:flex; flex-direction:column; padding:8px 0 0; overflow:hidden; }
   dialog.sheet .sheet-in.split > .grabber,
   dialog.sheet .sheet-in.split > .sheet-head{ flex:0 0 auto; margin-left:16px; margin-right:16px; }
@@ -371,27 +373,20 @@ try{
     @starting-style{ dialog.sheet[open]{ transform:translateY(100%); } }
   }
 
-  /* --- テンキー --- */
-  .amount-display{
-    text-align:right; padding:10px 14px 8px; border-radius:14px; background:var(--surface-2);
-    margin-bottom:10px;
+  /* --- 金額入力 --- */
+  /* 打っている数字が画面の主役なので、他の欄よりはっきり大きく出す。
+     type=number なので、スマホでは OS の数字キーボードがそのまま出る。 */
+  .amount-field input{
+    font-size:28px; font-weight:800; text-align:right; letter-spacing:-.02em;
+    padding:12px 14px; background:var(--surface-2); font-variant-numeric:tabular-nums;
   }
-  .amount-display .expr{ font-size:12px; color:var(--ink-soft); min-height:17px; }
-  /* 物理キーボードのある画面でだけ案内を出す */
-  .kbd-hint{ display:none; color:var(--ink-faint); font-size:11px; }
-  @media (hover: hover) and (pointer: fine){ .kbd-hint{ display:inline; } }
-  .amount-display .val{ font-size:30px; font-weight:800; letter-spacing:-.02em; line-height:1.2; }
-  .amount-display .val.in{ color:var(--accent); }
-  .keypad{ display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
-  .keypad button{
-    appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--ink);
-    border-radius:13px; font-size:20px; font-weight:700; cursor:pointer;
-    min-height:52px; transition:background-color .12s var(--ease-out), transform .08s var(--ease-out);
-  }
-  .keypad button:active{ transform:scale(.94); background:var(--surface-2); }
-  .keypad button.op{ background:var(--surface-2); font-size:19px; color:var(--accent); }
-  .keypad button.save{ background:var(--accent); color:#fff; border-color:var(--accent); font-size:15px; font-weight:800; grid-row:span 2; }
-  .keypad button.wide{ grid-column:span 2; }
+  /* 上下の増減ボタンは指では押しづらく、誤爆もするので消す */
+  .amount-field input::-webkit-outer-spin-button,
+  .amount-field input::-webkit-inner-spin-button{ appearance:none; -webkit-appearance:none; margin:0; }
+  .amount-field input[type=number]{ appearance:textfield; -moz-appearance:textfield; }
+  .amount-field input.in{ color:var(--accent); }
+  /* 保存はシート下端に固定。片手の親指で届く位置に、幅いっぱいで置く */
+  .save-wide{ width:100%; font-size:15px; min-height:50px; background:var(--accent); }
 
   /* --- トースト --- */
   #toasts{
@@ -693,7 +688,7 @@ try{
      §5 SELECT   集計ロジック（メモ化）★DOM非依存・自己テスト対象
      §6 ROUTER   ルーティング
      §7 VIEW     各画面の描画
-     §9 UI       シート・トースト・テンキー
+     §9 UI       シート・トースト・入力
      §12 TEST    ?selftest=1
      §13 BOOT    起動
    ==================================================================== */
@@ -797,7 +792,7 @@ function emptyState(){
   return {
     schemaVersion: SCHEMA_VERSION,
     meta: { createdAt: now, updatedAt: now, appVersion: APP_VERSION },
-    prefs:{ theme:"auto", keypad:true, lastRoute:"status" },
+    prefs:{ theme:"auto", lastRoute:"status" },
     accounts:[], methods:[], categories:[],
     transactions:[], subscriptions:[], subOverrides:{}, templates:[],
     budgets:{}, holidays:{},
@@ -1799,7 +1794,7 @@ function route(){
 const go = to => { location.hash = "#/" + to; };
 
 /* ====================================================================
-   §9 UI — トースト・シート・テンキー
+   §9 UI — トースト・シート・入力
    ==================================================================== */
 const Toast = {
   show(msg, opt){
@@ -1832,13 +1827,12 @@ const Toast = {
 function openSheet(id){ const d = $(id); if (d && !d.open) d.showModal(); }
 function closeSheet(id){ const d = $(id); if (d && d.open) d.close(); }
 
-/* --- 入力シートの状態（テンキー込み） --- */
+/* --- 入力シートの状態 --- */
 const Entry = {
   open:false, editId:null,
   // type は expense / income / transfer。transfer は貯蓄・投資（消費ではない）
   type:"expense", incomeKind:"refund",
-  date:"", categoryId:null, methodId:null, detail:"",
-  acc:null, op:null, cur:"0",
+  date:"", categoryId:null, methodId:null, detail:"", amount:"",
 
   reset(pre){
     const cats = Sel.entryCategories("expense");
@@ -1848,38 +1842,19 @@ const Entry = {
     this.date = todayStr();
     this.categoryId = (cats[0] && cats[0].id) || null;
     this.methodId   = (mths[0] && mths[0].id) || null;
-    this.detail = "";
-    this.acc = null; this.op = null; this.cur = "0";
+    this.detail = ""; this.amount = "";
     if (pre) Object.assign(this, pre);
   },
   loadTx(t){
     this.reset();
     this.editId = t.id; this.type = t.type; this.incomeKind = t.incomeKind || "refund";
     this.date = t.date; this.categoryId = t.categoryId; this.methodId = t.methodId;
-    this.detail = t.detail || ""; this.cur = String(t.amount);
+    this.detail = t.detail || ""; this.amount = String(t.amount);
   },
-  /* 式は {acc, op, cur} の3変数だけ。eval もパーサも使わない。
-     円なので整数だけ扱えばよく、浮動小数点誤差が原理的に発生しない。 */
+  /** 円なので整数で扱う。小数や記号が入っても数字だけ拾う。 */
   value(){
-    const cur = parseInt(this.cur, 10) || 0;
-    if (this.op === "+") return (this.acc || 0) + cur;
-    if (this.op === "-") return (this.acc || 0) - cur;
-    return cur;
-  },
-  exprText(){
-    if (this.op == null) return "";
-    return (this.acc||0).toLocaleString("ja-JP") + " " + (this.op === "+" ? "＋" : "−") + " " + (parseInt(this.cur,10)||0).toLocaleString("ja-JP");
-  },
-  key(k){
-    if (/^[0-9]$/.test(k)){ this.cur = this.cur === "0" ? k : (this.cur.length < 10 ? this.cur + k : this.cur); }
-    else if (k === "00"){ if (this.cur !== "0") this.cur = (this.cur + "00").slice(0,10); }
-    else if (k === "back"){ this.cur = this.cur.length > 1 ? this.cur.slice(0,-1) : "0"; }
-    else if (k === "clear"){ this.acc = null; this.op = null; this.cur = "0"; }
-    else if (k === "+" || k === "-"){
-      const v = this.value();
-      this.acc = v; this.op = k; this.cur = "0";
-    }
-    View.entrySheet();
+    const n = Math.round(Number(String(this.amount).replace(/[^0-9.-]/g, "")) || 0);
+    return Number.isFinite(n) ? n : 0;
   },
 };
 
@@ -2008,15 +1983,23 @@ View.appbar = function(){
 };
 
 /* --- 入力シート --- */
+/** 選択中の id が一覧に無ければ末尾に足す。アーカイブ済みのものを
+ *  編集するときに、プルダウンの表示と保存値がずれるのを防ぐ。 */
+function withCurrent(list, id, lookup){
+  if (!id || list.some(x => x.id === id)) return list;
+  return list.concat([lookup(id)]);
+}
 View.entrySheet = function(){
   const host = $("#sheet-entry-in");
   if (!host) return;
   host.classList.add("split");
   const isTransfer = Entry.type === "transfer";
-  const cats = Sel.entryCategories(Entry.type);
-  const mths = Sel.activeMethods();
+  // アーカイブ済みの用途・支払方法で記録された過去の取引を編集するとき、
+  // 一覧に無いと「選ばれていない」ように見えて、触らずに保存すると
+  // 画面の表示と保存される値が食い違う。選択中のものは必ず一覧に足す。
+  const cats = withCurrent(Sel.entryCategories(Entry.type), Entry.categoryId, Sel.cat);
+  const mths = withCurrent(Sel.activeMethods(), Entry.methodId, Sel.mth);
   const isIncome = Entry.type === "income";
-  const v = Entry.value();
   const tpl = (Entry.editId || isTransfer) ? [] : Sel.templates();
 
   mount(host, html`
@@ -2045,24 +2028,30 @@ View.entrySheet = function(){
             </button>`)}
         </div>` : ""}
 
-      <div class="note mb0" style="margin:10px 0 4px">${isTransfer ? "預け先" : "用途"}</div>
-      <div class="chip-row">
-        ${cats.map(c => html`<button class="chip" data-act="entry:cat" data-id="${c.id}" aria-pressed="${String(c.id===Entry.categoryId)}"><span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${(c.icon?c.icon+" ":"")+c.name}</button>`)}
-        <button class="chip add" data-act="cat:quickadd">＋ 追加</button>
-      </div>
+      <label class="field amount-field" style="margin-top:14px">金額（円）
+        <input type="number" id="entry-amount" inputmode="numeric" min="0" step="1"
+               value="${Entry.amount}" placeholder="0" enterkeyhint="done"
+               class="${isIncome ? "in" : isTransfer ? "sv" : ""}">
+      </label>
 
-      <div class="note mb0" style="margin-bottom:4px">支払方法</div>
-      <div class="chip-row">
-        ${mths.map(m => html`<button class="chip" data-act="entry:mth" data-id="${m.id}" aria-pressed="${String(m.id===Entry.methodId)}">${m.name}</button>`)}
-        <button class="chip add" data-act="mth:quickadd">＋ 追加</button>
-      </div>
-
-      <div class="grid" style="margin-top:8px">
+      <div class="grid" style="margin-top:10px">
+        <label class="field">${isTransfer ? "預け先" : "用途"}
+          <select id="entry-cat">
+            ${cats.map(c => html`<option value="${c.id}" ${c.id===Entry.categoryId?"selected":""}>${(c.icon?c.icon+" ":"")+c.name}</option>`)}
+            <option value="__new">＋ 新しく追加…</option>
+          </select>
+        </label>
+        <label class="field">支払方法
+          <select id="entry-mth">
+            ${mths.map(m => html`<option value="${m.id}" ${m.id===Entry.methodId?"selected":""}>${m.name}</option>`)}
+            <option value="__new">＋ 新しく追加…</option>
+          </select>
+        </label>
         <label class="field">利用日
-          <input type="date" id="entry-date" value="${Entry.date}" data-act="noop">
+          <input type="date" id="entry-date" value="${Entry.date}">
         </label>
         <label class="field">メモ
-          <input type="text" id="entry-detail" value="${Entry.detail}" placeholder="例: 店名、用途など" data-act="noop">
+          <input type="text" id="entry-detail" value="${Entry.detail}" placeholder="例: 店名、用途など" enterkeyhint="done">
         </label>
       </div>
 
@@ -2074,31 +2063,7 @@ View.entrySheet = function(){
     </div>
 
     <div class="sheet-foot">
-      <div class="amount-display">
-        <div class="expr num">${Entry.exprText() || raw('<span class="kbd-hint">キーボードでも入力できます</span>')}</div>
-        <div class="val num ${isIncome ? "in" : isTransfer ? "sv" : ""}" role="textbox" aria-live="polite" aria-label="金額">${yen(v)}</div>
-      </div>
-      <div class="keypad">
-        <button data-act="key" data-k="7">7</button>
-        <button data-act="key" data-k="8">8</button>
-        <button data-act="key" data-k="9">9</button>
-        <button data-act="key" data-k="back" class="op" aria-label="1文字削除">⌫</button>
-
-        <button data-act="key" data-k="4">4</button>
-        <button data-act="key" data-k="5">5</button>
-        <button data-act="key" data-k="6">6</button>
-        <button data-act="key" data-k="+" class="op">＋</button>
-
-        <button data-act="key" data-k="1">1</button>
-        <button data-act="key" data-k="2">2</button>
-        <button data-act="key" data-k="3">3</button>
-        <button data-act="key" data-k="-" class="op">−</button>
-
-        <button data-act="key" data-k="00">00</button>
-        <button data-act="key" data-k="0">0</button>
-        <button data-act="key" data-k="clear" class="op">C</button>
-        <button data-act="entry:save" class="save" style="grid-row:auto">保存</button>
-      </div>
+      <button class="btn save-wide" data-act="entry:save">${Entry.editId ? "更新する" : "保存する"}</button>
     </div>
   `);
 };
@@ -3127,7 +3092,7 @@ const Actions = {
     Entry.detail     = t.detail || "";
     Entry.type = "expense";
     // 金額が未入力のときだけ、よく使う金額を入れておく
-    if (Entry.value() === 0 && t.amount){ Entry.acc = null; Entry.op = null; Entry.cur = String(t.amount); }
+    if (Entry.value() === 0 && t.amount) Entry.amount = String(t.amount);
     View.entrySheet();
   },
   "entry:savetpl"(){
@@ -3149,9 +3114,6 @@ const Actions = {
       View.entrySheet();
     });
   },
-  "entry:cat"({id}){ syncEntryInputs(); Entry.categoryId = id; View.entrySheet(); },
-  "entry:mth"({id}){ syncEntryInputs(); Entry.methodId = id; View.entrySheet(); },
-  key({k}){ Entry.key(k); },
 
   "entry:save"(){
     syncEntryInputs();
@@ -3191,9 +3153,10 @@ const Actions = {
   },
 
   "cat:quickadd"(){
+    syncEntryInputs();
     const name = prompt("追加する用途の名前");
-    if (!name || !name.trim()) return;
-    if (dupCategory(name.trim())){ Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return; }
+    if (!name || !name.trim()){ View.entrySheet(); return; }
+    if (dupCategory(name.trim())){ Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); View.entrySheet(); return; }
     const id = uid("cat");
     Store.commit(s => s.categories.push({
       id, name:name.trim(), icon:"", colorSlot: s.categories.length % SERIES_N,
@@ -3203,10 +3166,11 @@ const Actions = {
     Entry.categoryId = id; View.entrySheet();
   },
   "mth:quickadd"(){
+    syncEntryInputs();
     const name = prompt("追加する支払方法の名前");
-    if (!name || !name.trim()) return;
+    if (!name || !name.trim()){ View.entrySheet(); return; }
     if (Store.state.methods.some(m => !m.archived && m.name === name.trim())){
-      Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); return;
+      Toast.show("「" + name.trim() + "」はすでにあります", {kind:"err"}); View.entrySheet(); return;
     }
     const id = uid("mth");
     Store.commit(s => s.methods.push({
@@ -3573,9 +3537,12 @@ function dupCategory(name, exceptId){
 }
 
 function syncEntryInputs(){
-  const d = $("#entry-date"), t = $("#entry-detail");
-  if (d) Entry.date = d.value || todayStr();
-  if (t) Entry.detail = t.value || "";
+  const g = id => { const el = $("#" + id); return el ? el.value : null; };
+  const d = g("entry-date");   if (d != null) Entry.date = d || todayStr();
+  const t = g("entry-detail"); if (t != null) Entry.detail = t || "";
+  const a = g("entry-amount"); if (a != null) Entry.amount = a;
+  const c = g("entry-cat");    if (c != null && c !== "__new") Entry.categoryId = c;
+  const m = g("entry-mth");    if (m != null && m !== "__new") Entry.methodId = m;
 }
 
 /** 節約診断のテキスト。既定は要約だけ。明細は明示的に選んだときだけ。 */
@@ -4976,7 +4943,7 @@ document.addEventListener("input", e => {
   if (e.target.id === "hist-q"){ HistoryUI.q = e.target.value; clearTimeout(HistoryUI._t);
     HistoryUI._t = setTimeout(() => { View.history(); const i = $("#hist-q"); if (i){ i.focus();
       i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
-  if (e.target.id === "entry-date" || e.target.id === "entry-detail") syncEntryInputs();
+  if (["entry-date","entry-detail","entry-amount"].includes(e.target.id)) syncEntryInputs();
   if (e.target.id === "hist-min" || e.target.id === "hist-max"){
     HistoryUI[e.target.id === "hist-min" ? "min" : "max"] = e.target.value;
     clearTimeout(HistoryUI._t2);
@@ -4989,13 +4956,13 @@ document.addEventListener("input", e => {
   }
 });
 
-/* 予算欄は blur（change）で確定させる。入力中に再描画すると
-   カーソルが飛ぶので、ビュー側も deferIfFocused で守っている。 */
+/* 描き直しで折りたたみが閉じないように、開閉の状態を覚えておく */
 document.addEventListener("toggle", e => {
-  // 描き直しで折りたたみが閉じないように状態を覚えておく
   if (e.target.classList && e.target.classList.contains("fold")) SettingsUI.openHolidays = e.target.open;
 }, true);
 
+/* プルダウンの切り替えと、予算欄の確定。予算は入力中に再描画すると
+   カーソルが飛ぶので blur（change）で確定させ、ビュー側も deferIfFocused で守っている。 */
 document.addEventListener("change", e => {
   // 締め日/支払日の種類を変えると入力欄の構成が変わるので組み替える
   if (e.target.id === "mf-closetype" || e.target.id === "mf-paydaytype"){
@@ -5004,6 +4971,10 @@ document.addEventListener("change", e => {
   if (e.target.id === "sf-unit" || e.target.id === "sf-every"){
     SubForm.read(); View.subForm(); return;
   }
+  // プルダウンで「＋ 新しく追加…」を選んだらその場で作る
+  if (e.target.id === "entry-cat" && e.target.value === "__new"){ Actions["cat:quickadd"](); return; }
+  if (e.target.id === "entry-mth" && e.target.value === "__new"){ Actions["mth:quickadd"](); return; }
+  if (e.target.id === "entry-cat" || e.target.id === "entry-mth"){ syncEntryInputs(); return; }
   const catId = e.target.dataset && e.target.dataset.budgetCat;
   if (!catId) return;
   const mk = statusMonth();
@@ -5018,11 +4989,6 @@ document.addEventListener("change", e => {
 
 /* バックアップの読み込み。壊れたファイルで家計簿が消えないよう、
    検証 → スナップショット → 差し替え → 報告（取り消し付き）の順で進める。 */
-document.addEventListener("toggle", e => {
-  // 描き直しで折りたたみが閉じないように状態を覚えておく
-  if (e.target.classList && e.target.classList.contains("fold")) SettingsUI.openHolidays = e.target.open;
-}, true);
-
 document.addEventListener("change", e => {
   if (e.target.id !== "io-import") return;
   const file = e.target.files && e.target.files[0];
@@ -5067,29 +5033,18 @@ document.addEventListener("change", e => {
   reader.readAsText(file);
 });
 
-/* パソコンで使うときは、テンキーを押さなくてもキーボードで金額を打てるようにする。
-   メモや日付を編集している間は横取りしない。 */
+/* 入力シートでは Enter で保存できるようにする。
+   端末標準のキーボードを使うので、数字の打鍵はブラウザに任せる。 */
 document.addEventListener("keydown", e => {
   const sheet = $("#sheet-entry");
   if (!sheet || !sheet.open) return;
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-
+  if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return;
   const el = document.activeElement;
-  const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-
-  if (e.key === "Enter"){
-    if (typing && el.type !== "date") el.blur();   // メモ入力中の Enter は確定だけ
-    e.preventDefault();
-    Actions["entry:save"]();
-    return;
-  }
-  if (typing) return;                               // 以下は入力欄の外にいるときだけ
-
-  if (/^[0-9]$/.test(e.key)){ e.preventDefault(); Entry.key(e.key); return; }
-  if (e.key === "+"){ e.preventDefault(); Entry.key("+"); return; }
-  if (e.key === "-"){ e.preventDefault(); Entry.key("-"); return; }
-  if (e.key === "Backspace"){ e.preventDefault(); Entry.key("back"); return; }
-  if (e.key === "Delete" || e.key === "c" || e.key === "C"){ e.preventDefault(); Entry.key("clear"); return; }
+  if (el && el.tagName === "SELECT") return;          // 選択中は閉じるだけにする
+  if (el && el.type === "date") return;               // 日付ピッカーの確定を邪魔しない
+  e.preventDefault();
+  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) el.blur();
+  Actions["entry:save"]();
 });
 
 /* グラフのホバー用ツールチップ */
