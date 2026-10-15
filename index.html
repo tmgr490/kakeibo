@@ -853,7 +853,10 @@ const APP_VERSION   = "2.0.0-phase1";
 const SCHEMA_VERSION= 3;
 const KEY_STATE     = "kakeibo_state";
 const KEY_V1        = "kakeibo_tracker_state_v1";   // 永久に触らない（退路）
-const KEY_UNDO      = "kakeibo_undo_snapshot";
+/* かつて取り消し用の控えを置いていたキー。読む場所がどこにも無いまま
+   記録の丸ごとのコピーが端末に残り続けていたので、書くのをやめた。
+   リセットのときに、昔の版が残した分を片付けるためだけに名前を残す。 */
+const KEY_OLD_UNDO  = "kakeibo_undo_snapshot";
 
 const WD_JP = ["日","月","火","水","木","金","土"];
 
@@ -1245,6 +1248,8 @@ const Store = (function(){
 
   const isVisible = host => !!host && !host.hasAttribute("hidden") && !host.closest("[hidden]");
 
+  const held = v => v.deferIfFocused && v.host && v.host.contains(document.activeElement);
+
   function flush(){
     queued = false;
     const d = new Set(dirty); dirty.clear();
@@ -1252,7 +1257,7 @@ const Store = (function(){
       if (!v.deps.some(x => d.has(x))) continue;
       if (!isVisible(v.host)) { v.stale = true; continue; }
       // 予算欄などで入力中に再描画するとカーソルが飛ぶので保留する
-      if (v.deferIfFocused && v.host.contains(document.activeElement)) { v.stale = true; continue; }
+      if (held(v)) { v.stale = true; continue; }
       try { v.render(state); v.stale = false; } catch(e){ console.error("[render]", v.id, e); }
     }
   }
@@ -1273,8 +1278,12 @@ const Store = (function(){
     register(id, deps, render, host, opt){
       views.push({ id, deps, render, host, stale:true, deferIfFocused: !!(opt && opt.deferIfFocused) });
     },
+    /** 保留していた描き直しを流す。画面の切り替え時と、
+     *  入力欄からフォーカスが外れたときに呼ばれる。
+     *  これが無いと、予算を入れて Enter を押しても数字が変わらない
+     *  （保存はされているのに画面だけ古いまま、がいちばん不安になる）。 */
     refreshStale(){
-      for (const v of views) if (v.stale && isVisible(v.host)){
+      for (const v of views) if (v.stale && isVisible(v.host) && !held(v)){
         try { v.render(state); v.stale = false; } catch(e){ console.error("[render]", v.id, e); }
       }
     },
@@ -1407,8 +1416,10 @@ Sel.subOccurrences = function(sub, from, to){
   const every = Math.max(1, Math.round(Number(sub.every) || 1));
 
   if (sub.interval === "週次"){
+    // ミリ秒の割り算は夏時間のある地域で1日ぶんずれる。1周期ぶん手前から
+    // 始めて、範囲外は push() 側で落とす（数回よけいに回るだけで害がない）
     const step = 7 * every * 86400000;
-    let k = Math.max(0, Math.ceil((from - start) / step));
+    let k = Math.max(0, Math.floor((from - start) / step) - 1);
     let d = new Date(start); d.setDate(d.getDate() + k*7*every);
     let guard = 0;
     while (d <= limit && guard++ < 600){ push(d); d = new Date(d); d.setDate(d.getDate()+7*every); }
@@ -1539,6 +1550,22 @@ Sel.categoriesInMonth = memo(function(monthKey){
   return active.concat(extra);
 });
 
+/** その月に予算を見る対象の用途。
+ *  予算タブの合計・ホームのペース・節約診断が、これを同じように読む。
+ *  別々に数えていた頃は、同じ「予算合計」が画面によって違う額になっていた。
+ *  未分類は受け皿なので、支出も予算も無い月は出さない。 */
+Sel.budgetCategories = memo(function(monthKey){
+  const { totals } = Sel.monthTotals(monthKey);
+  return Sel.categoriesInMonth(monthKey).filter(c =>
+    c.id !== CAT_UNCAT || (totals[CAT_UNCAT] || 0) !== 0 || Sel.budgetOf(monthKey, CAT_UNCAT) > 0);
+});
+
+/** その月の予算の合計。ペースも予算タブもこれを読む。 */
+Sel.budgetTotal = memo(function(monthKey){
+  return Sel.budgetCategories(monthKey)
+    .reduce((a,c) => a + Sel.budgetOf(monthKey, c.id), 0);
+});
+
 const DONUT_MAX = 6;
 Sel.breakdown = memo(function(monthKey){
   const { totals, expense } = Sel.monthTotals(monthKey);
@@ -1582,9 +1609,8 @@ Sel.trend = memo(function(monthKey, n){
 
 /** 今月あと使えるお金と1日あたりのペース。 */
 Sel.pace = memo(function(monthKey){
-  const { totals, expense } = Sel.monthTotals(monthKey);
-  let budget = 0;
-  Sel.categoriesInMonth(monthKey).forEach(c => { budget += Sel.budgetOf(monthKey, c.id); });
+  const { expense } = Sel.monthTotals(monthKey);
+  const budget = Sel.budgetTotal(monthKey);
 
   const [y,m] = monthKey.split("-").map(Number);
   const days = monthEndDay(y,m);
@@ -2212,6 +2238,9 @@ View.entrySheet = function(){
   const mths = withCurrent(Sel.activeMethods(), Entry.methodId, Sel.mth);
   const isIncome = Entry.type === "income";
   const tpl = Entry.editId ? [] : Sel.templates();
+  // 登録済みなら、同じボタンで解除できるようにする（他に消す導線が無いため）
+  const savedTpl = (Store.state.templates || []).find(t =>
+    t.categoryId === Entry.categoryId && t.methodId === Entry.methodId) || null;
 
   mount(host, html`
     <div class="grabber"></div>
@@ -2246,12 +2275,16 @@ View.entrySheet = function(){
       <div class="grid" style="margin-top:10px">
         <label class="field">用途
           <select id="entry-cat">
+            ${/* 候補が空だと「＋ 新しく追加…」が最初から選ばれた状態になり、
+                 選び直しても change が飛ばず追加できなくなる。先頭に空の行を置く */
+              cats.length ? "" : html`<option value="" selected disabled>選んでください</option>`}
             ${cats.map(c => html`<option value="${c.id}" ${c.id===Entry.categoryId?"selected":""}>${(c.icon?c.icon+" ":"")+c.name}</option>`)}
             <option value="__new">＋ 新しく追加…</option>
           </select>
         </label>
         <label class="field">支払方法
           <select id="entry-mth">
+            ${mths.length ? "" : html`<option value="" selected disabled>選んでください</option>`}
             ${mths.map(m => html`<option value="${m.id}" ${m.id===Entry.methodId?"selected":""}>${m.name}</option>`)}
             <option value="__new">＋ 新しく追加…</option>
           </select>
@@ -2267,7 +2300,8 @@ View.entrySheet = function(){
       <div class="btn-row">
         ${Entry.editId
           ? html`<button class="btn danger small" data-act="tx:delete" data-id="${Entry.editId}">この記録を削除</button>`
-          : html`<button class="btn ghost small" data-act="entry:savetpl">★ この組み合わせをよく使う入力に登録</button>`}
+          : html`<button class="btn ghost small" data-act="entry:savetpl">${
+              savedTpl ? "★ よく使う入力から外す" : "★ この組み合わせをよく使う入力に登録"}</button>`}
       </div>
     </div>
 
@@ -2395,7 +2429,7 @@ View._month = function(mk){
 
 View._budget = function(mk){
   const { totals } = Sel.monthTotals(mk);
-  const cats = Sel.categoriesInMonth(mk).filter(c => c.id !== CAT_UNCAT || (totals[CAT_UNCAT]||0) !== 0);
+  const cats = Sel.budgetCategories(mk);
   let bTotal = 0, sTotal = 0;
 
   const rows = cats.map(c => {
@@ -3303,10 +3337,19 @@ const Actions = {
     syncEntryInputs();
     if (!Entry.categoryId || !Entry.methodId){ Toast.show("用途と支払方法を選んでください", {kind:"err"}); return; }
     const label = Sel.cat(Entry.categoryId).name + " ・ " + Sel.mth(Entry.methodId).name;
-    // 画面で見分けられない組み合わせは作らせない
-    const dup = (Store.state.templates || []).some(t =>
+    // 登録済みなら解除。取り消しトーストを逃すと二度と消せなかったのを直す
+    const dup = (Store.state.templates || []).find(t =>
       t.categoryId === Entry.categoryId && t.methodId === Entry.methodId);
-    if (dup){ Toast.show("同じ組み合わせが登録済みです"); return; }
+    if (dup){
+      const gone = dup;
+      Store.commit(s => { s.templates = s.templates.filter(t => t.id !== gone.id); }, D.UI);
+      View.entrySheet();
+      Toast.undo("「" + label + "」を外しました", () => {
+        Store.commit(s => { s.templates.push(gone); }, D.UI);
+        View.entrySheet();
+      });
+      return;
+    }
     const id = uid("tpl");
     Store.commit(s => {
       if (!Array.isArray(s.templates)) s.templates = [];
@@ -3395,9 +3438,12 @@ const Actions = {
   /** 用途をタップ → その用途に絞った履歴へ */
   "status:drill"({id}){
     if (!id || id === "__other"){ StatusUI.tab = "budget"; View.status(); return; }
-    HistoryUI.month = statusMonth();
-    HistoryUI.categoryId = id;
-    HistoryUI.methodId = ""; HistoryUI.q = "";
+    // 前の絞り込みが残っていると、用途で絞ったつもりの画面に
+    // 金額の条件やカレンダー表示が効いたままになる
+    Object.assign(HistoryUI, {
+      month: statusMonth(), mode:"list", categoryId:id,
+      methodId:"", q:"", min:"", max:"", focusDate:null,
+    });
     View.history();
     go("history");
   },
@@ -3584,11 +3630,16 @@ const Actions = {
   "hol:add"(){
     const d = prompt("休業日の日付（YYYY-MM-DD）", todayStr());
     if (!d) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())){ Toast.show("日付の形式が違います（例: 2026-12-30）", {kind:"err"}); return; }
+    const ds = d.trim();
+    // 形だけ合っていても 2026-13-45 のような日付は通してはいけない。
+    // 入れても一覧に出るだけで、休日判定には永久に効かないため
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ds) || fmt(parseDate(ds)) !== ds){
+      Toast.show("その日付は存在しません（例: 2026-12-30）", {kind:"err"}); return;
+    }
     const name = prompt("名前（例: 会社休業日）", "休業日");
     if (!name) return;
-    Store.commit(s => { s.holidays[d.trim()] = { name:name.trim(), source:"manual" }; }, D.HOLIDAY);
-    HolidayUI.year = d.trim().slice(0,4);
+    Store.commit(s => { s.holidays[ds] = { name:name.trim(), source:"manual" }; }, D.HOLIDAY);
+    HolidayUI.year = ds.slice(0,4);
     View.settings();
   },
   async "hol:fetch"(){
@@ -3608,7 +3659,8 @@ const Actions = {
         s.prefs.lastHolidaySync = todayStr();
       }, D.HOLIDAY);
       View.settings();
-      Toast.show(`祝日を反映しました（新規 ${added}件${kept ? " / 手動の ${kept}件は保持" : ""}）`.replace("${kept}", kept));
+      Toast.show("祝日を反映しました（新規 " + added + "件"
+                 + (kept ? " / 手動の " + kept + "件は保持" : "") + "）");
     }catch(e){
       Toast.show("取得できませんでした。通信環境をご確認ください（手動でも足せます）", {kind:"err", ms:6000});
     }
@@ -3662,10 +3714,10 @@ const Actions = {
     if (!confirm("このアプリの記録をすべて消して初期状態に戻します。取り消せません。よろしいですか？")) return;
     try{
       // v1 のキーも消す。片方だけ消すと、リセットしたのに次の起動で
-      // 旧データから復活してしまう
-      localStorage.setItem(KEY_UNDO, JSON.stringify(Store.state));
+      // 旧データから復活してしまう。昔の版が残した控えもここで片付ける
       localStorage.removeItem(KEY_STATE);
       localStorage.removeItem(KEY_V1);
+      localStorage.removeItem(KEY_OLD_UNDO);
       location.reload();
     }catch(e){ Toast.show("失敗しました", {kind:"err"}); }
   },
@@ -3685,7 +3737,6 @@ const Actions = {
   "dev:reloadv1"(){
     if (!confirm("v1のデータを読み直し、現在のv2データを破棄します。よろしいですか？")) return;
     try{
-      localStorage.setItem(KEY_UNDO, localStorage.getItem(KEY_STATE) || "");
       localStorage.removeItem(KEY_STATE);
       location.reload();
     }catch(e){ Toast.show("失敗しました", {kind:"err"}); }
@@ -3701,17 +3752,17 @@ function copyBudget(kind){
   const prevTotals = Sel.monthTotals(prevKey).totals;
   const cats = Sel.activeCategories();
 
-  const before = JSON.stringify(Store.state.budgets[mk] || null);
-  let n = 0;
-  Store.commit(s => {
-    const dst = s.budgets[mk] = Object.assign({}, s.budgets[mk]);
-    cats.forEach(c => {
-      const v = kind === "actual" ? Math.max(0, Math.round(prevTotals[c.id] || 0)) : Sel.budgetOf(prevKey, c.id);
-      if (v > 0){ dst[c.id] = v; n++; }
-    });
-  }, D.BUDGET);
-
+  // 先に数えておく。0件のときに空の月を作らないため
+  const next = {};
+  cats.forEach(c => {
+    const v = kind === "actual" ? Math.max(0, Math.round(prevTotals[c.id] || 0)) : Sel.budgetOf(prevKey, c.id);
+    if (v > 0) next[c.id] = v;
+  });
+  const n = Object.keys(next).length;
   if (!n){ Toast.show("先月に" + (kind === "actual" ? "実績" : "予算") + "がありませんでした", {kind:"err"}); return; }
+
+  const before = JSON.stringify(Store.state.budgets[mk] || null);
+  Store.commit(s => { s.budgets[mk] = Object.assign({}, s.budgets[mk], next); }, D.BUDGET);
   View.status();
   Toast.undo(n + "件の用途に反映しました", () => {
     Store.commit(s => {
@@ -3769,7 +3820,7 @@ function buildAnalysisText(months, includeRows){
   L.push("");
 
   const last = data[data.length-1];
-  const cats = Sel.activeCategories().filter(c => Sel.budgetOf(last.monthKey, c.id) > 0);
+  const cats = Sel.budgetCategories(last.monthKey).filter(c => Sel.budgetOf(last.monthKey, c.id) > 0);
   if (cats.length){
     L.push(`■ 直近月（${last.y}/${pad2(last.m)}）の予算と実績`);
     const t = Sel.monthTotals(last.monthKey).totals;
@@ -4904,10 +4955,80 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S18 精査で見つかった不具合の回帰テスト ---------------- */
+  function s18(){
+    g("S18 予算の対象は1箇所で決める");
+    // 9月に未分類へ予算を置き、10月は未分類の支出が無い状態を作る。
+    // 以前はここで「予算タブ ¥0 / ホームのペース ¥8,000」と食い違っていた
+    const s = seedState();
+    const food = s.categories[0].id, m0 = s.methods[0].id;
+    s.transactions.push(
+      { id:"a", date:"2026-09-02", amount:5000, type:"expense", incomeKind:null, categoryId:food,      methodId:m0, detail:"" },
+      { id:"u", date:"2026-09-05", amount:1000, type:"expense", incomeKind:null, categoryId:CAT_UNCAT, methodId:m0, detail:"" },
+      { id:"b", date:"2026-10-02", amount:3000, type:"expense", incomeKind:null, categoryId:food,      methodId:m0, detail:"" });
+    s.budgets = { "2026-09": { [CAT_UNCAT]: 8000, [food]: 20000 } };
+
+    withState(s, () => {
+      for (const mk of ["2026-09","2026-10"]){
+        const cats = Sel.budgetCategories(mk);
+        const sum  = cats.reduce((a,c) => a + Sel.budgetOf(mk, c.id), 0);
+        eq(mk + ": 合計は対象の総和",   Sel.budgetTotal(mk), sum);
+        eq(mk + ": ペースも同じ合計",   Sel.pace(mk).budget, sum);
+        // 対象に重複が無いこと（同じ用途を二重に数えない）
+        eq(mk + ": 対象に重複なし", new Set(cats.map(c=>c.id)).size, cats.length);
+      }
+      // ★ 繰り越した未分類の予算が、どちらの数え方にも同じように入る
+      eq("10月も未分類の繰り越しを数える", Sel.budgetTotal("2026-10"), 8000 + 20000);
+      ok("10月の対象に未分類が入る",
+         Sel.budgetCategories("2026-10").some(c => c.id === CAT_UNCAT));
+      // 予算も支出も無ければ未分類は出さない
+      const quiet = seedState();
+      withState(quiet, () => {
+        ok("使っていない未分類は対象外",
+           !Sel.budgetCategories("2026-10").some(c => c.id === CAT_UNCAT));
+      });
+    });
+
+    g("S18b 週次は範囲の初日ちょうどでも落とさない");
+    // ミリ秒の割り算で初回位置を出していたときに落ちうる並び
+    [1,2,3].forEach(every => {
+      const w = seedState();
+      w.subscriptions.push({ id:"w", name:"定期便", amount:500, methodId:w.methods[0].id,
+        categoryId:CAT_SUB, interval:"週次", every, start:"2026-01-01", end:null,
+        status:"有効", pauseFrom:null, pauseTo:null, memo:"" });
+      withState(w, () => {
+        const sub = Store.state.subscriptions[0];
+        // 起点そのもの
+        eq(every + "週ごと: 起点の日が出る",
+           Sel.subOccurrences(sub, parseDate("2026-01-01"), parseDate("2026-01-01")).length, 1);
+        // n周期目ちょうどが範囲の初日
+        const d2 = new Date(2026,0,1); d2.setDate(d2.getDate() + 7*every);
+        eq(every + "週ごと: 次の回も範囲の初日で出る",
+           Sel.subOccurrences(sub, d2, d2).length, 1);
+        // 総当たりと一致すること
+        const from = parseDate("2026-01-01"), to = parseDate("2026-06-30");
+        const brute = [];
+        for (let d = new Date(2026,0,1); d <= to; d.setDate(d.getDate() + 7*every)) brute.push(fmt(d));
+        eq(every + "週ごと: 総当たりと一致",
+           Sel.subOccurrences(sub, from, to).map(o => fmt(o.date)).join(","), brute.join(","));
+      });
+    });
+
+    g("S18c よく使う入力は登録と解除ができる");
+    const t = seedState();
+    const tc = t.categories[0].id, tm = t.methods[0].id;
+    withState(t, () => {
+      Store.commit(st => st.templates.push({ id:"k", categoryId:tc, methodId:tm }), D.UI);
+      eq("登録すると候補の先頭に出る", Sel.templates()[0].id, "k");
+      Store.commit(st => { st.templates = st.templates.filter(x => x.id !== "k"); }, D.UI);
+      ok("外すと候補から消える", !Sel.templates().some(x => x.id === "k"));
+    });
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16,s17].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16,s17,s18].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -5153,9 +5274,18 @@ document.addEventListener("click", e => {
   fn(Object.assign({}, el.dataset), el, e);
 });
 document.addEventListener("input", e => {
-  if (e.target.id === "hist-q"){ HistoryUI.q = e.target.value; clearTimeout(HistoryUI._t);
-    HistoryUI._t = setTimeout(() => { View.history(); const i = $("#hist-q"); if (i){ i.focus();
-      i.setSelectionRange(i.value.length, i.value.length); } }, 250); }
+  if (e.target.id === "hist-q"){
+    HistoryUI.q = e.target.value;
+    clearTimeout(HistoryUI._t);
+    HistoryUI._t = setTimeout(() => {
+      // 描き直すと入力欄ごと作り直されるので、カーソルの位置を持ち越す。
+      // 末尾に飛ばすと、途中の字を直したいときに毎回打ち直しになる
+      const pos = e.target.selectionStart;
+      View.history();
+      const i = $("#hist-q");
+      if (i){ i.focus(); try { i.setSelectionRange(pos, pos); } catch(err){} }
+    }, 250);
+  }
   if (["entry-date","entry-detail","entry-amount"].includes(e.target.id)) syncEntryInputs();
   if (e.target.id === "hist-min" || e.target.id === "hist-max"){
     HistoryUI[e.target.id === "hist-min" ? "min" : "max"] = e.target.value;
@@ -5167,6 +5297,14 @@ document.addEventListener("input", e => {
       if (el){ el.focus(); try { el.setSelectionRange(pos, pos); } catch(err){} }
     }, 350);
   }
+});
+
+/* 入力欄からフォーカスが外れたら、保留していた描き直しを流す。
+   予算欄は入力中に描き直すとカーソルが飛ぶので保留しているが、
+   流す側が無いと「保存されたのに画面が変わらない」で止まってしまう。 */
+document.addEventListener("focusout", () => {
+  // focusout の時点ではまだ activeElement が移っていないので1フレーム待つ
+  requestAnimationFrame(() => Store.refreshStale());
 });
 
 /* 描き直しで折りたたみが閉じないように、開閉の状態を覚えておく */
@@ -5226,7 +5364,6 @@ document.addEventListener("change", e => {
           !confirm(`今ある ${had} 件の記録が、0件のファイルで置き換えられます。よろしいですか？`)){
         throw new Error("読み込みを中止しました");
       }
-      try { localStorage.setItem(KEY_UNDO, JSON.stringify(snapshot)); } catch(err){}
       Store.replace(r.state);
       View.settings();
 
@@ -5246,6 +5383,16 @@ document.addEventListener("change", e => {
   reader.readAsText(file);
 });
 
+/* 予算欄は Enter で確定にする。
+   入力中は描き直しを保留している（カーソルが飛ぶので）ぶん、
+   フォーカスを外さないと「保存はされたのに数字が変わらない」になる。 */
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  if (!(e.target && e.target.dataset && e.target.dataset.budgetCat)) return;
+  e.preventDefault();
+  e.target.blur();              // blur で change が飛び、保留も外れる
+});
+
 /* 入力シートでは Enter で保存できるようにする。
    端末標準のキーボードを使うので、数字の打鍵はブラウザに任せる。 */
 document.addEventListener("keydown", e => {
@@ -5255,6 +5402,9 @@ document.addEventListener("keydown", e => {
   const el = document.activeElement;
   if (el && el.tagName === "SELECT") return;          // 選択中は閉じるだけにする
   if (el && el.type === "date") return;               // 日付ピッカーの確定を邪魔しない
+  // ボタンにフォーカスがあるときは、そのボタンを押させる。
+  // ここで横取りすると「閉じる」で Enter したのに保存される
+  if (el && (el.tagName === "BUTTON" || el.hasAttribute("data-act"))) return;
   e.preventDefault();
   if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) el.blur();
   Actions["entry:save"]();
