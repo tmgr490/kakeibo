@@ -18,16 +18,26 @@
 <link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
 <title>家計簿</title>
 
-<!-- テーマを描画前に当てる（チラつき防止） -->
+<!-- テーマと端末の種類を描画前に当てる（チラつき防止）。
+     端末の種類は data-platform に入れ、CSS 側で Android だけ見た目を寄せる。
+     iOS は従来のまま。 -->
 <script>
 try{
   var p = JSON.parse(localStorage.getItem('kakeibo_state')||'{}').prefs;
   if(p && p.theme && p.theme!=='auto') document.documentElement.dataset.theme = p.theme;
 }catch(e){}
+try{
+  var ua = navigator.userAgent, d = document.documentElement;
+  // userAgentData があればそちらが確実。無い端末は UA で判断する
+  var plat = (navigator.userAgentData && navigator.userAgentData.platform) || '';
+  if (/android/i.test(plat) || /Android/.test(ua)) d.dataset.platform = 'android';
+  else if (/iPhone|iPad|iPod/.test(ua) ||
+           (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) d.dataset.platform = 'ios';
+}catch(e){}
 </script>
 
 <style>
-@layer tokens, base, layout, components, views, utils;
+@layer tokens, base, layout, components, views, utils, android;
 
 /* ===================================================================
    §T tokens
@@ -410,6 +420,35 @@ try{
   .toast.err button{ color:#fff; text-decoration:underline; }
   @keyframes toastIn{ from{ opacity:0; transform:translateY(12px); } to{ opacity:1; transform:translateY(0); } }
 
+  /* --- 更新のお知らせ --- */
+  /* トーストは1行しか入らないので、更新内容を並べる場所は別に用意する */
+  #update-host{
+    position:fixed; left:50%; transform:translateX(-50%);
+    bottom:calc(var(--bar-h) + var(--safe-b) + 12px); z-index:92;
+    width:min(520px, calc(100% - 28px)); pointer-events:none;
+  }
+  .update-card{
+    pointer-events:auto; background:var(--surface); color:var(--ink);
+    border:1px solid var(--line); border-radius:16px; padding:14px 16px 12px;
+    box-shadow:var(--shadow-lg); animation:toastIn .28s var(--ease-spring);
+  }
+  .update-card h3{ font-size:14px; font-weight:800; margin:0 0 2px; }
+  .update-card .ver{ font-size:11px; color:var(--ink-faint); font-weight:700; }
+  .update-card ul{ margin:9px 0 0; padding-left:1.15em; font-size:12.5px; line-height:1.65; color:var(--ink-soft); }
+  .update-card li{ margin-bottom:2px; }
+  .update-card li::marker{ color:var(--accent); }
+  .update-card .more{ font-size:11.5px; color:var(--ink-faint); margin:4px 0 0; }
+  .update-card .btn-row{ margin-top:12px; justify-content:flex-end; }
+
+  /* 設定の更新履歴 */
+  .rel{ padding:11px 0; border-bottom:1px solid var(--line); }
+  .rel:last-child{ border-bottom:0; padding-bottom:0; }
+  .rel .rel-head{ display:flex; align-items:baseline; gap:8px; font-size:12px; font-weight:800; }
+  .rel .rel-head .d{ color:var(--ink-faint); font-weight:700; font-size:11px; }
+  .rel .rel-head .now{ color:var(--accent); font-size:10.5px; font-weight:800; }
+  .rel ul{ margin:5px 0 0; padding-left:1.15em; font-size:12.5px; line-height:1.6; color:var(--ink-soft); }
+  .rel li::marker{ color:var(--accent); }
+
   /* --- 月送り --- */
   .month-switch{ display:flex; align-items:center; justify-content:center; gap:14px; margin-bottom:12px; }
   .month-switch button{
@@ -642,6 +681,90 @@ try{
   #selftest .c .nm{ flex:1; }
   #selftest .c .gw{ font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--ink-soft); white-space:pre-wrap; word-break:break-all; }
 }
+
+/* ===================================================================
+   §A android — Android のときだけ、端末の作法に寄せる
+   -------------------------------------------------------------------
+   iOS と PC の見た目は変えない。ここは data-platform="android" の
+   ときだけ当たる。最後のレイヤーなので、上の指定より確実に勝つ。
+
+   Android と iOS で作法が違って、そのままだと「借り物」に見えるのは
+   主にこの4つ:
+     ・押した感触 — iOS は縮む / Android は波紋（リップル）
+     ・角 — Material は iOS より角丸が大きく、ボタンは丸型（ピル）
+     ・書体 — Roboto と Noto Sans JP
+     ・FAB の形 — 円ではなく角の丸い四角
+   「戻る」でシートが閉じることも Android の常識なので、JS 側で面倒を見る。
+   =================================================================== */
+@layer android {
+  :root[data-platform="android"]{
+    /* Material の標準的な動きの曲線（emphasized decelerate） */
+    --ease-spring: cubic-bezier(.05,.7,.1,1);
+    --tap:48px;                       /* Android のタップ目標は48dp */
+  }
+  :root[data-platform="android"] body{
+    font-family:Roboto,"Noto Sans JP","Noto Sans CJK JP","Droid Sans",system-ui,sans-serif;
+    /* 押した場所が灰色に光る既定の挙動は、リップルと二重になる */
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  /* --- 形 --- */
+  :root[data-platform="android"] .btn{ border-radius:20px; }
+  :root[data-platform="android"] .btn.small{ border-radius:18px; min-height:40px; }
+  :root[data-platform="android"] .save-wide{ border-radius:24px; }
+  :root[data-platform="android"] .chip{ border-radius:8px; }     /* M3 のチップは角丸の四角 */
+  :root[data-platform="android"] input,
+  :root[data-platform="android"] select,
+  :root[data-platform="android"] textarea{ border-radius:8px; }
+  :root[data-platform="android"] .seg{ border-radius:20px; }
+  :root[data-platform="android"] .seg button{ border-radius:18px; }
+  :root[data-platform="android"] dialog.sheet{ border-radius:28px 28px 0 0; }
+  :root[data-platform="android"] dialog.sheet .grabber{ width:32px; }
+  :root[data-platform="android"] .update-card{ border-radius:12px; }
+  /* Material のスナックバーは角丸が小さく、面も濃い */
+  :root[data-platform="android"] .toast{ border-radius:4px; }
+
+  /* --- 押した感触: 縮める代わりに波紋を出す --- */
+  :root[data-platform="android"] .btn:active,
+  :root[data-platform="android"] .chip:active,
+  :root[data-platform="android"] .fab:active,
+  :root[data-platform="android"] header.appbar .icon-btn:active,
+  :root[data-platform="android"] nav.tabbar button:active .ic{ transform:none; }
+  :root[data-platform="android"] .btn:active{ filter:none; }
+  :root[data-platform="android"] .rippling{ position:relative; overflow:hidden; }
+  .ripple{
+    position:absolute; border-radius:50%; pointer-events:none;
+    background:currentColor; opacity:.22; transform:scale(0);
+    animation:rippleOut .45s cubic-bezier(.2,0,0,1) forwards;
+  }
+  @keyframes rippleOut{ to{ transform:scale(1); opacity:0; } }
+  @media (prefers-reduced-motion: reduce){ .ripple{ display:none; } }
+
+  /* --- FAB: 円ではなく角丸の四角、影も Material 寄りに --- */
+  :root[data-platform="android"] nav.tabbar .fab{
+    width:60px; height:56px; border-radius:17px;
+    background:var(--accent); box-shadow:0 3px 8px rgba(0,0,0,.26), 0 1px 3px rgba(0,0,0,.2);
+  }
+
+  /* --- 下のタブ: 選んでいる項目をピルで囲うのが M3 の作法 --- */
+  :root[data-platform="android"] nav.tabbar{
+    background:var(--surface); backdrop-filter:none; -webkit-backdrop-filter:none;
+    border-top:1px solid var(--line);
+  }
+  :root[data-platform="android"] nav.tabbar button{ gap:3px; position:relative; }
+  :root[data-platform="android"] nav.tabbar button .ic{
+    padding:3px 17px; border-radius:16px; transition:background-color .2s var(--ease-out);
+  }
+  :root[data-platform="android"] nav.tabbar button[aria-current="page"] .ic{ background:var(--accent-soft); }
+
+  /* PCサイドバーのときは元の形に戻す（画面幅で切り替わるので上書きし直す） */
+  @media (min-width: 900px){
+    :root[data-platform="android"] nav.tabbar .fab{
+      width:100%; height:48px; border-radius:24px; box-shadow:var(--shadow-sm);
+    }
+    :root[data-platform="android"] nav.tabbar button .ic{ padding:0; background:none; }
+  }
+}
 </style>
 </head>
 <body>
@@ -674,6 +797,7 @@ try{
 <dialog class="sheet" id="sheet-detail"><div class="sheet-in" id="sheet-detail-in"></div></dialog>
 
 <div id="toasts"></div>
+<div id="update-host"></div>
 
 <script>
 "use strict";
@@ -1824,8 +1948,73 @@ const Toast = {
   undo(msg, onUndo){ return Toast.show(msg, { actionLabel:"取り消す", onAction:onUndo, ms:6500 }); },
 };
 
-function openSheet(id){ const d = $(id); if (d && !d.open) d.showModal(); }
+function openSheet(id){ const d = $(id); if (d && !d.open){ d.showModal(); Android.sheetOpened(id); } }
 function closeSheet(id){ const d = $(id); if (d && d.open) d.close(); }
+
+/* --- Android 向けの振る舞い（見た目は §A android の CSS 側） ----------
+   iOS と PC では何もしない。 */
+const Android = {
+  on: document.documentElement.dataset.platform === "android",
+
+  /** 押した所から波紋を出す。Material の「押した感触」はこれで決まる。 */
+  ripple(e){
+    if (!Android.on || e.button) return;
+    const el = e.target.closest(".btn, .chip, .fab, .icon-btn, nav.tabbar button, .seg button");
+    if (!el || el.disabled) return;
+    const r = el.getBoundingClientRect();
+    // 押した点から、いちばん遠い角まで届く大きさにする
+    const size = 2 * Math.hypot(Math.max(e.clientX - r.left, r.right - e.clientX),
+                                Math.max(e.clientY - r.top,  r.bottom - e.clientY));
+    const s = document.createElement("span");
+    s.className = "ripple";
+    s.style.width = s.style.height = size + "px";
+    s.style.left = (e.clientX - r.left - size/2) + "px";
+    s.style.top  = (e.clientY - r.top  - size/2) + "px";
+    el.classList.add("rippling");
+    el.appendChild(s);
+    s.addEventListener("animationend", () => s.remove());
+  },
+
+  /* 「戻る」でシートを閉じる。Android で戻るとアプリごと出てしまうのは
+     いちばん嫌われる挙動なので、開いている間だけ履歴を1つ積んでおく。
+     このアプリはシートを2枚重ねないので、開いているのは常に1枚。 */
+  sheetOpened(id){
+    if (!Android.on) return;
+    try{ history.pushState({ kbSheet:id }, ""); }catch(e){}
+  },
+  sheetClosed(id){
+    if (!Android.on) return;
+    // 自分が積んだ分が残っているときだけ戻す（戻るで閉じたときは二重に戻さない）
+    if (history.state && history.state.kbSheet === id){ try{ history.back(); }catch(e){} }
+  },
+
+  /** 手動でテーマを選んだとき、Android のステータスバーの色も合わせる。
+      meta[media] は OS の設定しか見ないので、手動分はここで上書きする。 */
+  syncThemeColor(theme){
+    const dark = theme === "dark" ||
+      (theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+    let m = $("#theme-color-now");
+    if (!m){
+      m = document.createElement("meta");
+      m.id = "theme-color-now"; m.name = "theme-color";
+      // 先頭に入れる。theme-color は最初に条件が合ったものが使われる
+      document.head.insertBefore(m, document.head.firstChild);
+    }
+    m.content = dark ? "#071020" : "#0B2447";
+  },
+
+  init(){
+    Android.syncThemeColor((Store.state.prefs && Store.state.prefs.theme) || "auto");
+    if (!Android.on) return;
+    document.addEventListener("pointerdown", Android.ripple, true);
+    window.addEventListener("popstate", () => {
+      const open = $("dialog.sheet[open]");
+      if (open) open.close();
+    });
+    $$("dialog.sheet").forEach(d =>
+      d.addEventListener("close", () => Android.sheetClosed("#" + d.id)));
+  },
+};
 
 /* --- 入力シートの状態 --- */
 const Entry = {
@@ -3028,6 +3217,26 @@ View._other = function(){
     </div>
 
     <div class="panel">
+      <h2>更新履歴</h2>
+      ${SW.waiting()
+        ? html`<p class="note">新しいバージョンが届いています。</p>
+               <div class="btn-row" style="margin:0 0 10px"><button class="btn small" data-act="update:now">今すぐ更新</button></div>`
+        : ""}
+      ${SW.releases && SW.releases.releases
+        ? SW.releases.releases.map((r,i) => html`
+            <div class="rel">
+              <div class="rel-head">
+                <span>${r.version}</span><span class="d">${r.date || ""}</span>
+                ${i === 0 ? html`<span class="now">いま使っている版</span>` : ""}
+              </div>
+              <ul>${(r.notes || []).map(n => html`<li>${n}</li>`)}</ul>
+            </div>`)
+        : html`<p class="note mb0">${SW.supported()
+            ? "更新履歴は、ホーム画面に追加するか、一度オンラインで開き直すと表示されます。"
+            : "この開き方では更新履歴を取得できません（オフラインで使うための仕組みが動いていません）。"}</p>`}
+    </div>
+
+    <div class="panel">
       <h2>開発者</h2>
       <p class="note mb0">
         アプリ ${APP_VERSION} ／ スキーマ v${s.schemaVersion}<br>
@@ -3061,8 +3270,23 @@ const Actions = {
     Store.commit(s => { s.prefs.theme = v; }, D.PREF);
     if (v === "auto") delete document.documentElement.dataset.theme;
     else document.documentElement.dataset.theme = v;
+    Android.syncThemeColor(v);
     View.appbar();
     if (currentRoute() === "settings") View.settings();
+  },
+
+  /* --- 更新のお知らせ --- */
+  "update:now"(){
+    $("#update-host").innerHTML = "";
+    SW.applying = true;
+    const w = SW.reg && SW.reg.waiting;
+    // 切り替わると controllerchange で自動的に読み込み直される。
+    // 待機中のものが無いなら、読み直すだけでよい
+    if (w) w.postMessage("SKIP_WAITING"); else location.reload();
+  },
+  "update:later"(){
+    $("#update-host").innerHTML = "";
+    Toast.show("設定 → その他 からいつでも更新できます");
   },
 
   /* --- 入力 --- */
@@ -4864,6 +5088,7 @@ function boot(){
   Store.register("v-settings", [D.TX,D.SUB,D.CAT,D.METHOD,D.ACCOUNT,D.PREF,D.HOLIDAY], View.settings, $('[data-route="settings"]'));
 
   View.appbar();
+  Android.init();
   if (!location.hash) location.hash = "#/" + (Store.state.prefs.lastRoute || "status");
   route();
   window.addEventListener("hashchange", route);
@@ -4878,6 +5103,69 @@ function boot(){
 /* ====================================================================
    §11 PWA — オフラインで使えるようにする
    ==================================================================== */
+
+/* Service Worker との会話。更新内容（RELEASES）は sw.js 側に書いてある。
+   そこに置かないと「まだ表示していない新しい版の内容」が分からないため
+   —— 今ページに読み込まれている index.html が知っているのは自分の版だけで、
+   これから入る版が何を変えたのかは、待機中のワーカーしか知らない。 */
+const SW = {
+  reg: null,
+  /** 待機中／稼働中のワーカーに版と更新履歴を尋ねる。返事が無ければ null。 */
+  ask(worker, ms){
+    if (!worker) return Promise.resolve(null);
+    return new Promise(resolve => {
+      let done = false;
+      const finish = v => { if (!done){ done = true; resolve(v); } };
+      // 古い版のワーカーはこの問いかけを知らないので、待ちっぱなしにしない
+      setTimeout(() => finish(null), ms || 1500);
+      try{
+        const ch = new MessageChannel();
+        ch.port1.onmessage = e => finish(e.data && e.data.type === "VERSION" ? e.data : null);
+        worker.postMessage({ type:"VERSION" }, [ch.port2]);
+      }catch(e){ finish(null); }
+    });
+  },
+  /** 今このページを動かしている版（＝設定に出す更新履歴） */
+  current(){ return SW.ask(navigator.serviceWorker && navigator.serviceWorker.controller); },
+
+  applying: false,            // 「今すぐ更新」を押したか。押したときだけ読み込み直す
+  releases: null,             // 一度聞いたら覚えておく（設定を開くたびに聞かない）
+  supported(){ return "serviceWorker" in navigator; },
+  waiting(){ return !!(SW.reg && SW.reg.waiting); },
+
+  /** 起動後に更新履歴を取りに行く。間に合えば設定画面を描き直す。 */
+  async load(){
+    const info = await SW.current();
+    if (!info) return;
+    SW.releases = info;
+    if (currentRoute() === "settings") View.settings();
+  },
+};
+
+/** 更新のお知らせ。内容が取れたときは、何が変わるのかも並べて出す。 */
+function showUpdateCard(info){
+  const host = $("#update-host");
+  if (!host) return;
+  const rel   = info && info.releases && info.releases[0];
+  const notes = (rel && Array.isArray(rel.notes) ? rel.notes : []);
+  const SHOWN = 4;                       // 画面を覆わない程度に絞る
+  const rest  = Math.max(0, notes.length - SHOWN);
+
+  host.innerHTML = toHTML(html`
+    <div class="update-card" role="status" aria-live="polite">
+      <h3>新しいバージョンがあります</h3>
+      ${rel && rel.version ? html`<div class="ver">${rel.version}${rel.date ? "（" + rel.date + "）" : ""}</div>` : ""}
+      ${notes.length
+        ? html`<ul>${notes.slice(0, SHOWN).map(n => html`<li>${n}</li>`)}</ul>
+               ${rest ? html`<p class="more">ほか${rest}件。更新後に 設定 → その他 → 更新履歴 で全部読めます</p>` : ""}`
+        : html`<p class="more">更新内容を取得できませんでした。更新すると最新版になります</p>`}
+      <div class="btn-row">
+        <button class="btn ghost small" data-act="update:later">あとで</button>
+        <button class="btn small" data-act="update:now">今すぐ更新</button>
+      </div>
+    </div>`);
+}
+
 function registerServiceWorker(){
   // v2.html のうちは登録しない。スコープが ./ なので、v2.html を
   // アプリ本体としてキャッシュしてしまう
@@ -4894,11 +5182,13 @@ function registerServiceWorker(){
       // Pages は sw.js にもキャッシュ指示を返すので、これが無いと
       // 最大10分ぶん古い sw.js を見続ける
       const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache:"none" });
+      SW.reg = reg;
 
-      const notify = () => Toast.show("新しいバージョンがあります", {
-        actionLabel:"更新", ms:0,
-        onAction(){ if (reg.waiting) reg.waiting.postMessage("SKIP_WAITING"); },
-      });
+      // 待機中のワーカーが「新しい版」なので、そこに更新内容を聞いてから出す
+      const notify = async () => {
+        if (!reg.waiting) return;
+        showUpdateCard(await SW.ask(reg.waiting));
+      };
       if (reg.waiting) notify();
       reg.addEventListener("updatefound", () => {
         const sw = reg.installing;
@@ -4908,8 +5198,12 @@ function registerServiceWorker(){
         });
       });
 
+      // 初回の登録でも clients.claim() で controllerchange は起きる。
+      // そこで読み込み直すと、初めて開いた人の画面がいきなり再読み込みされる。
+      // 「今すぐ更新」を押したときだけ読み込み直す。
       let reloaded = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (!SW.applying){ SW.load().catch(() => {}); return; }
         if (reloaded) return;
         reloaded = true;
         location.reload();
@@ -4917,6 +5211,10 @@ function registerServiceWorker(){
 
       setInterval(() => reg.update(), 60*60*1000);
       document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update(); });
+
+      // 設定の更新履歴に出すぶん。失敗しても起動は妨げない
+      // （初回で controller がまだ無いときは、上の controllerchange で聞き直す）
+      SW.load().catch(() => {});
 
       // ローカルにしかデータが無いので、勝手に消されないよう頼んでおく。
       // これは利便性ではなく、データを失わないための処置
