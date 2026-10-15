@@ -595,8 +595,8 @@ try{
 
   /* --- テンプレート --- */
   .chip.tpl{ display:inline-flex; align-items:center; gap:6px; }
-  .tpl-amt{ font-size:11px; color:var(--ink-faint); font-variant-numeric:tabular-nums; }
-  .chip[aria-pressed="true"] .tpl-amt{ color:rgba(255,255,255,.75); }
+  .tpl-sub{ font-size:11px; color:var(--ink-faint); }
+  .chip[aria-pressed="true"] .tpl-sub{ color:rgba(255,255,255,.75); }
 
   /* --- 年間サマリー --- */
   .yr-row{ display:flex; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line); font-size:13px; }
@@ -1601,31 +1601,39 @@ Sel.pace = memo(function(monthKey){
   };
 });
 
-/** よく使う入力の候補。直近60日で頻度の高い「用途×支払方法×メモ」を拾う。
- *  手で登録したテンプレートを先に、足りない分を自動の候補で埋める。 */
+/** よく使う入力の候補。直近60日で頻度の高い「用途×支払方法」を拾う。
+ *  手で登録したものを先に、足りない分を自動の候補で埋める。
+ *  メモは数える単位に入れない —— 入れると「食費 ・ 現金」という
+ *  同じ見た目のチップが、メモ違いで何本も並んで見分けられなくなる。 */
+const tplKey = x => x.categoryId + "|" + x.methodId;
 Sel.templates = memo(function(){
-  const saved = Store.state.templates || [];
+  // 古いデータにはメモ違いの登録が残っている。見た目で区別できないので畳む
+  const saved = [];
+  const seen = new Set();
+  for (const t of (Store.state.templates || [])){
+    const k = tplKey(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    saved.push({ id:t.id, categoryId:t.categoryId, methodId:t.methodId, auto:false });
+  }
+
   const since = fmt(new Date(Date.now() - 60*86400000));
   const freq = new Map();
   for (const t of Store.state.transactions){
     if (t.date < since || t.type !== "expense") continue;
-    const key = t.categoryId + "|" + t.methodId + "|" + (t.detail || "");
-    if (!freq.has(key)) freq.set(key, { n:0, sum:0, categoryId:t.categoryId, methodId:t.methodId, detail:t.detail || "" });
-    const e = freq.get(key); e.n++; e.sum += t.amount;
+    const key = tplKey(t);
+    if (!freq.has(key)) freq.set(key, { n:0, categoryId:t.categoryId, methodId:t.methodId });
+    freq.get(key).n++;
   }
-  const isSaved = x => saved.some(s =>
-    s.categoryId === x.categoryId && s.methodId === x.methodId && (s.detail || "") === x.detail);
 
   const auto = Array.from(freq.values())
-    .filter(x => x.n >= 2 && !isSaved(x))          // 1回きりのものは候補にしない
+    .filter(x => x.n >= 2 && !seen.has(tplKey(x)))   // 1回きりのものは候補にしない
     .sort((a,b) => b.n - a.n)
     .slice(0, Math.max(0, 4 - saved.length))
-    .map(x => ({ id:"auto:" + x.categoryId + "|" + x.methodId + "|" + x.detail,
-                 label: x.detail || Sel.cat(x.categoryId).name,
-                 amount: Math.round(x.sum / x.n),  // よく使う金額を初期値にする
-                 categoryId:x.categoryId, methodId:x.methodId, detail:x.detail, auto:true, n:x.n }));
+    .map(x => ({ id:"auto:" + tplKey(x), categoryId:x.categoryId, methodId:x.methodId,
+                 auto:true, n:x.n }));
 
-  return saved.map(s => Object.assign({}, s, { auto:false })).concat(auto);
+  return saved.concat(auto);
 });
 
 /** カレンダー用。その月の日ごとの支出額と、カードの引き落とし日。 */
@@ -2222,11 +2230,11 @@ View.entrySheet = function(){
       ${tpl.length ? html`
         <div class="note mb0" style="margin:14px 0 4px">よく使う入力</div>
         <div class="chip-row">
-          ${tpl.map(t => html`
+          ${tpl.map(t => { const c = Sel.cat(t.categoryId), mth = Sel.mth(t.methodId); return html`
             <button class="chip tpl" data-act="entry:tpl" data-id="${t.id}">
-              <span class="dot" style="background:${raw(slotVar(Sel.cat(t.categoryId).colorSlot))}"></span>${t.label}
-              ${t.amount ? html`<span class="tpl-amt">${yen(t.amount)}</span>` : ""}
-            </button>`)}
+              <span class="dot" style="background:${raw(slotVar(c.colorSlot))}"></span>${c.name}
+              <span class="tpl-sub">・ ${mth.name}</span>
+            </button>`; })}
         </div>` : ""}
 
       <label class="field amount-field" style="margin-top:14px">金額（円）
@@ -3283,27 +3291,26 @@ const Actions = {
   "entry:tpl"({id}){
     const t = Sel.templates().find(x => x.id === id);
     if (!t) return;
+    // 先に拾っておく。打ちかけの金額やメモを消さないため
     syncEntryInputs();
+    // チップに出ているものだけを入れる。見た目と動きを一致させる
     Entry.categoryId = t.categoryId;
     Entry.methodId   = t.methodId;
-    Entry.detail     = t.detail || "";
     Entry.type = "expense";
-    // 金額が未入力のときだけ、よく使う金額を入れておく
-    if (Entry.value() === 0 && t.amount) Entry.amount = String(t.amount);
     View.entrySheet();
   },
   "entry:savetpl"(){
     syncEntryInputs();
     if (!Entry.categoryId || !Entry.methodId){ Toast.show("用途と支払方法を選んでください", {kind:"err"}); return; }
-    const label = (Entry.detail || Sel.cat(Entry.categoryId).name).trim();
+    const label = Sel.cat(Entry.categoryId).name + " ・ " + Sel.mth(Entry.methodId).name;
+    // 画面で見分けられない組み合わせは作らせない
     const dup = (Store.state.templates || []).some(t =>
-      t.categoryId === Entry.categoryId && t.methodId === Entry.methodId && (t.detail || "") === Entry.detail);
+      t.categoryId === Entry.categoryId && t.methodId === Entry.methodId);
     if (dup){ Toast.show("同じ組み合わせが登録済みです"); return; }
-    const amount = Entry.value() || null;
     const id = uid("tpl");
     Store.commit(s => {
       if (!Array.isArray(s.templates)) s.templates = [];
-      s.templates.push({ id, label, amount, categoryId:Entry.categoryId, methodId:Entry.methodId, detail:Entry.detail });
+      s.templates.push({ id, categoryId:Entry.categoryId, methodId:Entry.methodId });
     }, D.UI);
     View.entrySheet();
     Toast.undo("「" + label + "」を登録しました", () => {
@@ -4451,44 +4458,56 @@ const Test = (function(){
   function s13(){
     g("S13 よく使う入力");
     const s = seedState();
-    const c0 = s.categories[0].id, c1 = s.categories[1].id;
-    const m0 = s.methods[0].id;
+    const c0 = s.categories[0].id, c1 = s.categories[1].id, c2 = s.categories[2].id;
+    const m0 = s.methods[0].id, m1 = s.methods[1].id;
     const recent = d => fmt(new Date(Date.now() - d*86400000));
-    // 3回使った組み合わせ／2回／1回きり
-    [0,1,2].forEach(i => s.transactions.push({ id:"f"+i, date:recent(i+1), amount:1000+i*100,
-      type:"expense", incomeKind:null, categoryId:c0, methodId:m0, detail:"よく行く店" }));
+    const combo = t => t.categoryId + "|" + t.methodId;
+    // ★ メモ違いの3件。用途×支払方法が同じなので1つにまとまること
+    ["店A","店B","店C"].forEach((d,i) => s.transactions.push({ id:"f"+i, date:recent(i+1),
+      amount:1000+i*100, type:"expense", incomeKind:null, categoryId:c0, methodId:m0, detail:d }));
+    // 2回使った別の組み合わせ
     [0,1].forEach(i => s.transactions.push({ id:"g"+i, date:recent(i+1), amount:500,
-      type:"expense", incomeKind:null, categoryId:c1, methodId:m0, detail:"たまに" }));
+      type:"expense", incomeKind:null, categoryId:c1, methodId:m1, detail:"たまに" }));
+    // 1回きりの組み合わせ
     s.transactions.push({ id:"h", date:recent(1), amount:9000, type:"expense",
-      incomeKind:null, categoryId:c1, methodId:m0, detail:"一度きり" });
+      incomeKind:null, categoryId:c2, methodId:m0, detail:"一度きり" });
     // 60日より古いものは候補にしない
     s.transactions.push({ id:"old", date:recent(120), amount:300, type:"expense",
-      incomeKind:null, categoryId:c0, methodId:m0, detail:"むかしの店" });
+      incomeKind:null, categoryId:c2, methodId:m1, detail:"むかしの店" });
     withState(s, () => {
       const t = Sel.templates();
-      const labels = t.map(x => x.label);
-      ok("よく使う組み合わせが候補に出る", labels.includes("よく行く店"));
-      ok("2回でも候補に出る",             labels.includes("たまに"));
-      ok("1回きりは候補にしない",        !labels.includes("一度きり"));
-      ok("60日より古いものは出さない",   !labels.includes("むかしの店"));
-      ok("多い順に並ぶ", labels.indexOf("よく行く店") < labels.indexOf("たまに"));
-      const top = t.find(x => x.label === "よく行く店");
-      eq("初期金額は平均", top.amount, Math.round((1000+1100+1200)/3));
-      eq("用途が引き継がれる", top.categoryId, c0);
+      const combos = t.map(combo);
+      ok("よく使う組み合わせが候補に出る", combos.includes(c0+"|"+m0));
+      ok("2回でも候補に出る",             combos.includes(c1+"|"+m1));
+      ok("1回きりは候補にしない",        !combos.includes(c2+"|"+m0));
+      ok("60日より古いものは出さない",   !combos.includes(c2+"|"+m1));
+      ok("多い順に並ぶ", combos.indexOf(c0+"|"+m0) < combos.indexOf(c1+"|"+m1));
+      // ★ 今回の肝: メモが違っても1つのチップにまとまる
+      eq("メモ違いは1つにまとまる", combos.filter(k => k === c0+"|"+m0).length, 1);
+      eq("まとめた回数で数える",     t.find(x => combo(x) === c0+"|"+m0).n, 3);
+      // 表示に使うのは用途と支払方法だけ。金額もメモも持たない
+      const top = t.find(x => combo(x) === c0+"|"+m0);
+      eq("用途が引き継がれる",   top.categoryId, c0);
+      eq("支払方法も引き継がれる", top.methodId, m0);
+      ok("金額は持たない",       top.amount === undefined);
+      ok("メモも持たない",       top.detail === undefined);
       ok("候補は4件まで", t.length <= 4);
     });
 
     // 手で登録したものが優先され、自動候補と重複しない
     const s2_ = seedState();
     const sc = s2_.categories[0].id, sm = s2_.methods[0].id;
-    s2_.templates = [{ id:"t1", label:"手動のやつ", amount:800, categoryId:sc, methodId:sm, detail:"手動のやつ" }];
+    // 古い形（メモや金額つき）でも読めること。メモ違いは畳まれる
+    s2_.templates = [{ id:"t1", label:"手動のやつ", amount:800, categoryId:sc, methodId:sm, detail:"手動のやつ" },
+                     { id:"t2", label:"別メモ",     amount:300, categoryId:sc, methodId:sm, detail:"別メモ" }];
     [0,1,2].forEach(i => s2_.transactions.push({ id:"m"+i, date:recent(i+1), amount:800,
       type:"expense", incomeKind:null, categoryId:sc, methodId:sm, detail:"手動のやつ" }));
     withState(s2_, () => {
       const t = Sel.templates();
-      eq("同じ組み合わせが二重に出ない", t.filter(x => x.detail === "手動のやつ").length, 1);
-      eq("手で登録したものが先頭", t[0].label, "手動のやつ");
+      eq("同じ組み合わせが二重に出ない", t.filter(x => combo(x) === sc+"|"+sm).length, 1);
+      eq("手で登録したものが先頭", t[0].id, "t1");
       eq("手動は auto ではない", t[0].auto, false);
+      ok("古い形でも金額を引きずらない", t[0].amount === undefined);
     });
 
     g("S13b カレンダー");
