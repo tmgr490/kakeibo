@@ -109,12 +109,20 @@ try{
 @layer base {
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
+  /* ページ全体ではなく <main> の中だけをスクロールさせる。
+     ページ自体がスクロールすると、スマホのブラウザは上のURLバーを
+     隠そうとして画面の高さを変える。そのあいだ position:fixed の
+     下タブは行き場を失って、いったん本文と一緒に動いてから戻る
+     —— これが「スクロールすると下のタブがついてくる」正体。
+     中だけを動かせばURLバーは出たままなので、下タブは一切動かない。
+     ついでに、下に引っ張ったときのページ再読み込みも起きなくなる。 */
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic","Segoe UI",sans-serif;
     background:var(--paper); color:var(--ink); line-height:1.5;
     -webkit-text-size-adjust:100%; -webkit-font-smoothing:antialiased;
-    padding-bottom:calc(var(--bar-h) + var(--safe-b) + 12px);
-    overscroll-behavior-y:none;
+    height:100vh; height:100dvh; overflow:hidden;
+    display:flex; flex-direction:column;
+    overscroll-behavior:none;
   }
   h1,h2,h3{ letter-spacing:-0.015em; margin:0; }
   button{ font-family:inherit; }
@@ -132,8 +140,10 @@ try{
    §L layout
    =================================================================== */
 @layer layout {
+  /* body が縦のフレックスなので、sticky ではなく「上の行」として置く。
+     見え方は同じで、スクロール中に貼り直される分の仕事が無くなる */
   header.appbar{
-    position:sticky; top:0; z-index:40;
+    flex:0 0 auto; z-index:40;
     background:linear-gradient(135deg,var(--accent-deep),var(--accent));
     color:#fff; padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;
     box-shadow:var(--shadow-sm);
@@ -150,7 +160,22 @@ try{
   }
   header.appbar .icon-btn:active{ transform:scale(.9); }
 
-  main{ max-width:720px; margin:0 auto; padding:12px 14px 0; container-type:inline-size; }
+  /* スクロールするのはここだけ。幅の制限は中の section 側に持たせる
+     （main を狭くすると、スクロールバーまで画面の真ん中に来てしまう） */
+  main{
+    flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;
+    /* 端まで来たときにページ側へスクロールを渡さない。
+       Android の「引っ張って再読み込み」の誤爆を防ぐ */
+    overscroll-behavior:contain;
+  }
+  /* 画面を切り替えるたびに main へフォーカスを移すが、
+     マウス操作の人に枠が出ても意味がないので消す */
+  main:focus{ outline:none; }
+  main > section{
+    max-width:720px; margin:0 auto; container-type:inline-size;
+    padding:12px 14px calc(var(--bar-h) + var(--safe-b) + 12px);
+  }
 
   nav.tabbar{
     position:fixed; left:0; right:0; bottom:0; z-index:45;
@@ -160,6 +185,9 @@ try{
     background:color-mix(in srgb, var(--surface) 88%, transparent);
     backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%);
     border-top:1px solid var(--line);
+    /* ぼかしの付いた固定要素は、放っておくと本文と同じ面に描かれて
+       スクロールのたびに描き直される。自前の面に乗せて動かないようにする */
+    transform:translateZ(0); will-change:transform;
   }
   nav.tabbar button{
     appearance:none; border:none; background:transparent; cursor:pointer;
@@ -184,7 +212,7 @@ try{
 
   /* ===== PC（900px以上）: 下部タブを左サイドバーに、本文は2カラムに ===== */
   @media (min-width: 900px){
-    body{ padding-bottom:0; padding-left:var(--rail-w); }
+    body{ padding-left:var(--rail-w); }
     header.appbar{ padding-left:calc(var(--rail-w) + 20px); }
 
     nav.tabbar{
@@ -211,7 +239,7 @@ try{
     nav.tabbar .fab::after{ content:"記録する"; font-size:14px; }
     nav.tabbar .fab:active{ transform:scale(.98); }
 
-    main{ max-width:1040px; padding:18px 24px 40px; }
+    main > section{ max-width:1040px; padding:18px 24px 40px; }
     /* 2カラムにできる画面は横に並べる */
     .cols{ display:grid; grid-template-columns:1fr 1fr; gap:14px; align-items:start; }
     .cols > .span2{ grid-column:1 / -1; }
@@ -223,7 +251,7 @@ try{
   }
   /* 大画面では3カラムまで */
   @media (min-width: 1280px){
-    main{ max-width:1240px; }
+    main > section{ max-width:1240px; }
     .cols.c3{ grid-template-columns:repeat(3,1fr); }
   }
 }
@@ -778,7 +806,9 @@ try{
   <button class="icon-btn" data-act="theme:cycle" title="テーマ切替" aria-label="テーマ切替" id="theme-btn">◐</button>
 </header>
 
-<main>
+<!-- スクロールするのはページ全体ではなくここ。キーボードの PageDown や
+     スペースはフォーカスのある領域を動かすので、受け取れるようにしておく -->
+<main tabindex="-1">
   <section data-route="status"   hidden></section>
   <section data-route="history"  hidden></section>
   <section data-route="schedule" hidden></section>
@@ -1913,7 +1943,11 @@ function route(){
   Store.refreshStale();
   if (Store.state && Store.state.prefs.lastRoute !== r)
     Store.commit(s => { s.prefs.lastRoute = r; }, D.PREF);
-  window.scrollTo(0,0);
+  // スクロールするのは main なので、戻すのもそちら。
+  // あわせてフォーカスも移す（PCのPageDown・スペースが効くように、
+  // 読み上げでも画面が変わったことが伝わるように）
+  const sc = $("main");
+  if (sc){ sc.scrollTop = 0; sc.focus({ preventScroll:true }); }
 }
 const go = to => { location.hash = "#/" + to; };
 
