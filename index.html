@@ -424,6 +424,11 @@ try{
   /* 保存はシート下端に固定。片手の親指で届く位置に、幅いっぱいで置く */
   .save-wide{ width:100%; font-size:15px; min-height:50px; background:var(--accent); }
 
+  /* --- ご意見箱 --- */
+  .fb-count{ text-align:right; font-size:11px; color:var(--ink-faint); margin-top:4px;
+             font-variant-numeric:tabular-nums; }
+  .fb-count.near{ color:var(--warn); font-weight:700; }
+
   /* --- トースト --- */
   #toasts{
     position:fixed; left:50%; transform:translateX(-50%);
@@ -858,6 +863,23 @@ const KEY_V1        = "kakeibo_tracker_state_v1";   // 永久に触らない（�
    リセットのときに、昔の版が残した分を片付けるためだけに名前を残す。 */
 const KEY_OLD_UNDO  = "kakeibo_undo_snapshot";
 
+/* ▼ ご意見箱の宛先 ────────────────────────────────────────────────
+   web3forms.com に自分のメールアドレスを入れると出てくるアクセスキーを、
+   下の "" の中に貼る。貼るまで意見箱そのものが画面に出ないので、
+   空のままでも何も壊れない。
+
+   ・このキーは公開して構わない仕組み（キーからメールアドレスは割れない）
+   ・迷惑メールが来るようになったら、web3forms で作り直してここを貼り替える
+   ・送るのは本文・種別・連絡先・アプリの版・端末の種類だけ。
+     家計のデータ（金額・用途・メモ）は絶対に入れない（§FEEDBACK を見ること）
+   ────────────────────────────────────────────────────────── */
+const FEEDBACK_KEY = "";
+const FEEDBACK_URL = "https://api.web3forms.com/submit";
+const FEEDBACK_KINDS = ["機能の要望","使いづらい","不具合","その他"];
+const FEEDBACK_MAX   = 1000;   // 本文の上限
+const FEEDBACK_MIN   = 4;      // これ未満は受け付けない
+const FEEDBACK_PER_H = 5;      // 1時間にこの件数まで（無料枠と誤操作の保険）
+
 const WD_JP = ["日","月","火","水","木","金","土"];
 
 const SUB_STATUS      = ["有効","一時停止","解約予定","停止"];
@@ -941,12 +963,18 @@ function jpDate(s){ const d=parseDate(s); return (d.getMonth()+1)+"/"+d.getDate(
 /* ====================================================================
    §3 SCHEMA — 既定値・マイグレーション・検証
    ==================================================================== */
+/** 意見箱の覚えておくぶん。送信に失敗しても書いた文章が消えないよう、
+ *  下書きは state に持つ（家計のデータとは別物で、集計には一切関わらない）。 */
+function emptyFeedback(){
+  return { draft:"", kind:FEEDBACK_KINDS[0], contact:"", sent:[], lastSentAt:null };
+}
+
 function emptyState(){
   const now = new Date().toISOString();
   return {
     schemaVersion: SCHEMA_VERSION,
     meta: { createdAt: now, updatedAt: now, appVersion: APP_VERSION },
-    prefs:{ theme:"auto", lastRoute:"status" },
+    prefs:{ theme:"auto", lastRoute:"status", feedback: emptyFeedback() },
     accounts:[], methods:[], categories:[],
     transactions:[], subscriptions:[], subOverrides:{}, templates:[],
     budgets:{}, holidays:{},
@@ -1185,6 +1213,19 @@ function validate(input){
   });
   if (!S.prefs || typeof S.prefs !== "object") S.prefs = emptyState().prefs;
   if (!S.meta  || typeof S.meta  !== "object") S.meta  = emptyState().meta;
+  // 意見箱は後から足したので、古い状態にも形を入れておく
+  const fb = S.prefs.feedback;
+  if (!fb || typeof fb !== "object") S.prefs.feedback = emptyFeedback();
+  else {
+    const d = emptyFeedback();
+    S.prefs.feedback = {
+      draft:   typeof fb.draft   === "string" ? fb.draft.slice(0, FEEDBACK_MAX) : d.draft,
+      kind:    FEEDBACK_KINDS.includes(fb.kind) ? fb.kind : d.kind,
+      contact: typeof fb.contact === "string" ? fb.contact.slice(0, 200) : d.contact,
+      sent:    Array.isArray(fb.sent) ? fb.sent.filter(n => Number.isFinite(Number(n))).map(Number).slice(-50) : [],
+      lastSentAt: fb.lastSentAt || null,
+    };
+  }
 
   // システムカテゴリは必ず在る
   systemCategories().forEach(sc => { if (!byId(S.categories, sc.id)) S.categories.push(sc); });
@@ -3160,7 +3201,118 @@ View._holidays = function(){
 /* 節約診断。全取引をそのまま連結すると数年分では膨大だし、
    メモはこのアプリで最も個人的な情報なので、要約を既定にして
    明細は明示的に選んだときだけ含める。 */
+/* ====================================================================
+   §FEEDBACK ご意見箱
+   --------------------------------------------------------------------
+   作っている人にだけ届く。宛先は先頭の FEEDBACK_KEY。
+   ★ ここが唯一の送信経路。送る中身は payload() だけが決めるので、
+     画面に出している「いっしょに送られるもの」の注記と食い違えない。
+     家計のデータ（金額・用途・メモ）は絶対に入れないこと。
+   ==================================================================== */
+const Feedback = {
+  sending:false,
+  failed:false,          // 直前の送信に失敗したか（やり直しの導線を出すため）
+
+  on(){ return !!FEEDBACK_KEY; },
+  pref(){
+    const p = Store.state.prefs;
+    if (!p.feedback) p.feedback = emptyFeedback();
+    return p.feedback;
+  },
+
+  /** 画面の入力を state に取り込む。描き直しで消えないように。 */
+  read(){
+    const f = this.pref();
+    const body = $("#fb-body"), contact = $("#fb-contact");
+    if (body)    f.draft   = body.value.slice(0, FEEDBACK_MAX);
+    if (contact) f.contact = contact.value.slice(0, 200);
+  },
+  save(){
+    const f = this.pref();
+    Store.commit(s => { s.prefs.feedback = Object.assign({}, f); }, D.PREF);
+  },
+
+  /** 直近1時間の送信数。誤操作の連打と、無料枠（月250件）の使い切りを防ぐ。 */
+  recent(now){
+    const t = (now == null ? Date.now() : now) - 3600000;
+    return this.pref().sent.filter(x => x > t).length;
+  },
+  canSend(now){ return this.recent(now) < FEEDBACK_PER_H; },
+
+  /** この端末の情報。どの画面で困っているかを読むのに要る。 */
+  device(){
+    const plat = document.documentElement.dataset.platform || "その他";
+    const w = typeof innerWidth === "number" ? innerWidth : 0;
+    return plat + " / 幅" + w + "px";
+  },
+  version(){ return (SW.releases && SW.releases.version) || "不明"; },
+
+  /** ★ 送る中身はここだけ。家計のデータは1バイトも入れない。 */
+  payload(){
+    const f = this.pref();
+    const body = {
+      access_key: FEEDBACK_KEY,
+      subject: "家計簿アプリ ご意見: " + f.kind,
+      from_name: "家計簿アプリ",
+      "種別": f.kind,
+      "本文": String(f.draft || "").slice(0, FEEDBACK_MAX),
+      "アプリの版": this.version(),
+      "端末": this.device(),
+    };
+    // 空の連絡先はキーごと送らない（受け取る側で空欄が並ばないように）
+    const c = String(f.contact || "").trim();
+    if (c) body["連絡先"] = c.slice(0, 200);
+    return body;
+  },
+};
+
 const AnalysisUI = { months:3, includeRows:false, text:"" };
+
+View._feedback = function(){
+  if (!Feedback.on()) return "";      // 宛先が入るまでは出さない
+  const f = Feedback.pref();
+  const left = FEEDBACK_MAX - (f.draft || "").length;
+  const blocked = !Feedback.canSend();
+
+  return html`
+    <div class="panel">
+      <h2>ご意見・ご要望</h2>
+      <p class="note">「こんな機能が欲しい」「ここが使いづらい」を、作っている人に直接送れます。<strong>ほかの人には見えません。</strong></p>
+
+      <div class="chip-row">
+        ${FEEDBACK_KINDS.map(k => html`<button class="chip" data-act="fb:kind" data-v="${k}" aria-pressed="${String(f.kind===k)}">${k}</button>`)}
+      </div>
+
+      <label class="field" style="margin-top:4px">内容
+        <textarea id="fb-body" rows="5" maxlength="${FEEDBACK_MAX}"
+          placeholder="例: 履歴をまとめて消せるようにしてほしい／カレンダーの文字が小さくて読みづらい">${f.draft}</textarea>
+      </label>
+      <div class="fb-count ${left < 50 ? "near" : ""}">残り ${left} 文字</div>
+
+      <label class="field" style="margin-top:8px">返事がほしいときの連絡先（任意）
+        <input type="text" id="fb-contact" value="${f.contact}" maxlength="200"
+               placeholder="メールアドレスなど。空のままでも送れます">
+      </label>
+
+      <!-- 迷惑送信よけ。人には見えないので、埋まっていたら機械と判断する -->
+      <input type="checkbox" id="fb-botcheck" tabindex="-1" autocomplete="off"
+             aria-hidden="true" style="position:absolute;left:-9999px">
+
+      <p class="note" style="margin:10px 0 0">
+        いっしょに送られるもの: 種別 ／ 内容 ／ 連絡先 ／ アプリの版（${Feedback.version()}） ／ 端末（${Feedback.device()}）<br>
+        <strong>家計のデータ（金額・用途・メモ）は送りません。</strong>
+      </p>
+
+      <div class="btn-row">
+        <button class="btn" data-act="fb:send" ${Feedback.sending || blocked ? "disabled" : ""}>
+          ${Feedback.sending ? "送っています…" : Feedback.failed ? "もう一度送る" : "送る"}
+        </button>
+        ${Feedback.failed ? html`<button class="btn ghost small" data-act="fb:copy">📄 内容をコピー</button>` : ""}
+      </div>
+      ${blocked ? html`<p class="note mb0" style="color:var(--red)">少し時間をあけてから送ってください（1時間に${FEEDBACK_PER_H}件まで）。</p>` : ""}
+      ${f.lastSentAt ? html`<p class="note mb0">最後に送ったのは ${f.lastSentAt} です。ありがとうございます。</p>` : ""}
+    </div>`;
+};
 
 View._analysis = function(){
   return html`
@@ -3200,6 +3352,7 @@ View._other = function(){
   const rep = s.meta.migrationReport;
 
   return html`
+    ${View._feedback()}
     ${View._analysis()}
 
     <div class="panel">
@@ -3663,6 +3816,74 @@ const Actions = {
                  + (kept ? " / 手動の " + kept + "件は保持" : "") + "）");
     }catch(e){
       Toast.show("取得できませんでした。通信環境をご確認ください（手動でも足せます）", {kind:"err", ms:6000});
+    }
+  },
+
+  /* --- ご意見箱 --- */
+  "fb:kind"({v}){
+    Feedback.read();
+    Feedback.pref().kind = FEEDBACK_KINDS.includes(v) ? v : FEEDBACK_KINDS[0];
+    Feedback.save();
+    View.settings();
+  },
+  "fb:copy"(){
+    const f = Feedback.pref();
+    const t = "【" + f.kind + "】\n" + (f.draft || "");
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject())
+      .then(() => Toast.show("コピーしました"))
+      .catch(() => Toast.show("コピーできませんでした。手で選んでコピーしてください", {kind:"err"}));
+  },
+  async "fb:send"(){
+    if (Feedback.sending) return;
+    Feedback.read();
+    const f = Feedback.pref();
+
+    const body = String(f.draft || "").trim();
+    if (body.length < FEEDBACK_MIN){
+      Toast.show("もう少し詳しく書いてください", {kind:"err"}); return;
+    }
+    // 人には見えない欄が埋まっていたら機械。黙って受け取ったふりをする
+    const bot = $("#fb-botcheck");
+    if (bot && bot.checked){ Toast.show("ありがとうございます。届きました"); return; }
+
+    if (navigator.onLine === false){
+      Feedback.save();
+      Toast.show("通信できないときは送れません。書いた内容は残してあります", {kind:"err", ms:6000});
+      return;
+    }
+    if (!Feedback.canSend()){
+      Toast.show("少し時間をあけてから送ってください（1時間に" + FEEDBACK_PER_H + "件まで）", {kind:"err"});
+      return;
+    }
+
+    Feedback.sending = true; Feedback.failed = false;
+    View.settings();
+    try{
+      const res = await fetch(FEEDBACK_URL, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "Accept":"application/json" },
+        body: JSON.stringify(Feedback.payload()),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data || data.success !== true) throw new Error((data && data.message) || "送信に失敗しました");
+
+      // 送れたときだけ下書きを消す
+      const now = new Date();
+      Store.commit(st => {
+        const g = st.prefs.feedback;
+        g.draft = ""; g.sent = (g.sent || []).concat(Date.now()).slice(-50);
+        g.lastSentAt = fmt(now) + " " + pad2(now.getHours()) + ":" + pad2(now.getMinutes());
+      }, D.PREF);
+      Feedback.failed = false;
+      Toast.show("ありがとうございます。届きました", { ms:5000 });
+    }catch(e){
+      // ★ 失敗しても下書きは消さない。書いたものが消えるのが一番こたえる
+      Feedback.failed = true;
+      Feedback.save();
+      Toast.show("送れませんでした（" + (e && e.message || e) + "）。内容は残してあります", {kind:"err", ms:8000});
+    }finally{
+      Feedback.sending = false;
+      View.settings();
     }
   },
 
@@ -5025,10 +5246,86 @@ const Test = (function(){
     });
   }
 
+  /* ---------------- S19 ご意見箱 ---------------- */
+  function s19(){
+    g("S19 送る中身に家計のデータを混ぜない");
+    const s = seedState();
+    const cat = s.categories[0], m0 = s.methods[0];
+    s.transactions.push(
+      { id:"x1", date:"2026-05-02", amount:123456, type:"expense", incomeKind:null,
+        categoryId:cat.id, methodId:m0.id, detail:"ひみつの店名", tags:[] });
+    s.prefs.feedback = { draft:"カレンダーの文字が小さい", kind:"使いづらい",
+                         contact:"", sent:[], lastSentAt:null };
+    withState(s, () => {
+      const pay = Feedback.payload();
+      const json = JSON.stringify(pay);
+      // ★ ここが肝。実データを入れた状態で、1つも漏れていないこと
+      ok("金額が入らない",       json.indexOf("123456") === -1, json.slice(0,200), "123456 を含まない");
+      ok("メモが入らない",       json.indexOf("ひみつの店名") === -1);
+      ok("用途名が入らない",     json.indexOf(cat.name) === -1);
+      ok("支払方法が入らない",   json.indexOf(m0.name) === -1);
+      ok("取引のIDが入らない",   json.indexOf("x1") === -1);
+      // 送るべきものは入っていること
+      eq("本文が入る",   pay["本文"], "カレンダーの文字が小さい");
+      eq("種別が入る",   pay["種別"], "使いづらい");
+      eq("宛先が入る",   pay.access_key, FEEDBACK_KEY);
+      ok("件名に種別が入る", String(pay.subject).indexOf("使いづらい") > -1, pay.subject);
+      ok("端末の情報が入る", typeof pay["端末"] === "string" && pay["端末"].length > 0);
+      // 空の連絡先はキーごと送らない
+      ok("空の連絡先はキーごと出さない", !("連絡先" in pay), Object.keys(pay).join(","));
+    });
+
+    g("S19b 連絡先と文字数");
+    const s2_ = seedState();
+    s2_.prefs.feedback = { draft:"あ".repeat(FEEDBACK_MAX + 500), kind:"その他",
+                           contact:"  me@example.com  ", sent:[], lastSentAt:null };
+    withState(s2_, () => {
+      const pay = Feedback.payload();
+      eq("本文は上限で切る",   pay["本文"].length, FEEDBACK_MAX);
+      eq("連絡先は前後を詰める", pay["連絡先"], "me@example.com");
+    });
+
+    g("S19c 1時間の件数制限");
+    const s3_ = seedState();
+    const now = Date.now();
+    withState(s3_, () => {
+      const f = Feedback.pref();
+      f.sent = [];
+      ok("何も送っていなければ送れる", Feedback.canSend(now));
+      f.sent = [now-10, now-20, now-30, now-40];
+      ok("4件なら5件目は送れる", Feedback.canSend(now));
+      eq("直近の件数を数える", Feedback.recent(now), 4);
+      f.sent = [now-10, now-20, now-30, now-40, now-50];
+      ok("5件に達したら止まる", !Feedback.canSend(now));
+      // 1時間より古いものは数えない
+      f.sent = [now-3600001, now-3600002, now-3600003, now-3600004, now-3600005];
+      eq("1時間より前は数えない", Feedback.recent(now), 0);
+      ok("時間が経てば また送れる", Feedback.canSend(now));
+    });
+
+    g("S19d 古い状態でも形が整う");
+    const old = seedState();
+    delete old.prefs.feedback;
+    old.transactions.push({ id:"o", date:"2026-05-01", amount:100, type:"expense",
+      incomeKind:null, categoryId:old.categories[0].id, methodId:old.methods[0].id, detail:"" });
+    const fixed = validate(old).state;
+    ok("意見箱の形が補われる", !!fixed.prefs.feedback && Array.isArray(fixed.prefs.feedback.sent));
+    eq("種別は既定になる", fixed.prefs.feedback.kind, FEEDBACK_KINDS[0]);
+    // 壊れた値も直す
+    const broken = seedState();
+    broken.prefs.feedback = { draft:123, kind:"知らない種別", contact:{}, sent:"abc" };
+    broken.transactions.push({ id:"b", date:"2026-05-01", amount:100, type:"expense",
+      incomeKind:null, categoryId:broken.categories[0].id, methodId:broken.methods[0].id, detail:"" });
+    const bf = validate(broken).state.prefs.feedback;
+    eq("壊れた下書きは空に",   bf.draft, "");
+    eq("知らない種別は既定に", bf.kind, FEEDBACK_KINDS[0]);
+    eq("壊れた送信履歴は空に", bf.sent.length, 0);
+  }
+
   function run(){
     const before = localStorage.getItem(KEY_STATE);
     rs.length = 0;
-    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16,s17,s18].forEach(f => {
+    [s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11,s12,s13,s14,s15,s16,s17,s18,s19].forEach(f => {
       try { f(); } catch(e){ ok("💥 スイートが例外で停止: " + e.message, false, String(e && e.stack || e), "throw なし"); }
     });
     const after = localStorage.getItem(KEY_STATE);
@@ -5287,6 +5584,23 @@ document.addEventListener("input", e => {
     }, 250);
   }
   if (["entry-date","entry-detail","entry-amount"].includes(e.target.id)) syncEntryInputs();
+  // 意見箱: 打っている途中の文章を控える。描き直しはしない（カーソルが飛ぶため）。
+  // 残り文字数だけはその場で書き換える
+  if (e.target.id === "fb-body" || e.target.id === "fb-contact"){
+    // 画面に出ている文字数と、実際に送る文字数をずらさない。
+    // maxlength はブラウザが守ってくれるが、貼り付けや拡張機能で超えることがある
+    const cap = e.target.id === "fb-body" ? FEEDBACK_MAX : 200;
+    if (e.target.value.length > cap) e.target.value = e.target.value.slice(0, cap);
+    Feedback.read();
+    clearTimeout(Feedback._t);
+    Feedback._t = setTimeout(() => Feedback.save(), 400);
+    const c = $(".fb-count");
+    if (c){
+      const left = FEEDBACK_MAX - (Feedback.pref().draft || "").length;
+      c.textContent = "残り " + left + " 文字";
+      c.classList.toggle("near", left < 50);
+    }
+  }
   if (e.target.id === "hist-min" || e.target.id === "hist-max"){
     HistoryUI[e.target.id === "hist-min" ? "min" : "max"] = e.target.value;
     clearTimeout(HistoryUI._t2);
